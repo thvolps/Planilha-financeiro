@@ -11,10 +11,6 @@
     {
       "source": "/sw.js",
       "destination": "/api/index.py"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/static/$1"
     }
   ]
 }
