@@ -13,8 +13,13 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Painel Financeiro Pessoal")
 
-DB_NAME = "finance.db"
-UPLOAD_DIR = "uploads"
+if os.environ.get("VERCEL"):
+    DB_NAME = "/tmp/finance.db"
+    UPLOAD_DIR = "/tmp/uploads"
+else:
+    DB_NAME = "finance.db"
+    UPLOAD_DIR = "uploads"
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def get_db():
