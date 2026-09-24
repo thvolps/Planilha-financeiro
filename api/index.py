@@ -10,17 +10,32 @@ if ROOT_DIR not in sys.path:
 
 from main import app
 
-# Adicione ou garanta que este bloco esteja no final do arquivo api/index.py
+# Configuração de arquivos estáticos (suporta tanto public/ quanto static/)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
+public_path = os.path.join(root_dir, "public")
 static_path = os.path.join(root_dir, "static")
 
+if os.path.exists(public_path):
+    try:
+        app.mount("/public", StaticFiles(directory=public_path), name="public")
+    except Exception:
+        pass
+
 if os.path.exists(static_path):
-    app.mount("/static", StaticFiles(directory=static_path), name="static")
+    try:
+        app.mount("/static", StaticFiles(directory=static_path), name="static")
+    except Exception:
+        pass
 
 @app.get("/")
 def serve_home():
-    html_file = os.path.join(static_path, "index.html")
-    if os.path.exists(html_file):
-        return FileResponse(html_file)
-    return {"message": "API online. Coloque o index.html na pasta static."}
+    for p in [
+        os.path.join(public_path, "index.html"),
+        os.path.join(static_path, "index.html"),
+        "public/index.html",
+        "static/index.html"
+    ]:
+        if os.path.exists(p):
+            return FileResponse(p)
+    return {"message": "API online. Coloque o index.html na pasta public ou static."}
