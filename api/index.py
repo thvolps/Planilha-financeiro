@@ -111,10 +111,18 @@ def decode_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
+class User(BaseModel):
+    id: int
+    email: str
+    name: str
+
+    def __getitem__(self, item):
+        return getattr(self, item)
+
 def get_current_user(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None)
-) -> dict:
+) -> User:
     auth_token = None
     if authorization and authorization.startswith("Bearer "):
         auth_token = authorization.split(" ", 1)[1].strip()
@@ -132,7 +140,7 @@ def get_current_user(
         user = conn.execute("SELECT id, email, name FROM users WHERE id = ?", (payload["user_id"],)).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="Usuário não encontrado")
-        return dict(user)
+        return User(id=user["id"], email=user["email"], name=user["name"])
 
 def init_db():
     with get_db() as conn:
@@ -348,18 +356,23 @@ def get_me(current_user: dict = Depends(get_current_user)):
 
 # --- ROTAS DE DESPESAS ---
 @app.get("/api/bills")
-def list_bills(month: Optional[int] = None, year: Optional[int] = None, current_user: dict = Depends(get_current_user)):
+def list_bills(
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    current_user: User = Depends(get_current_user)
+):
     with get_db() as conn:
+        # Impossível trazer dados de outra pessoa, pois o user_id vem do token autenticado
         if month and year:
             prefix = f"{year:04d}-{month:02d}%"
             rows = conn.execute(
                 "SELECT * FROM bills WHERE user_id = ? AND due_date LIKE ? ORDER BY due_date ASC",
-                (current_user["id"], prefix)
+                (current_user.id, prefix)
             ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT * FROM bills WHERE user_id = ? ORDER BY due_date ASC",
-                (current_user["id"],)
+                (current_user.id,)
             ).fetchall()
         return [dict(row) for row in rows]
 
