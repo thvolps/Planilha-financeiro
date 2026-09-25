@@ -465,13 +465,15 @@ def service_worker():
     """
     return Response(content=content, media_type="application/javascript")
 
-# Montagem de arquivos estáticos da pasta public/
-if os.path.exists(public_path):
-    app.mount("/public", StaticFiles(directory=public_path), name="public")
-
+# Rota raiz servindo o index.html na raiz do projeto
 @app.get("/")
 def serve_index():
-    index_file = os.path.join(public_path, "index.html")
-    if os.path.exists(index_file):
-        return FileResponse(index_file)
-    return {"message": "API online. Coloque o index.html na pasta public."}
+    for p in [
+        os.path.join(root_dir, "index.html"),
+        "index.html",
+        os.path.join(public_path, "index.html"),
+        "public/index.html"
+    ]:
+        if os.path.exists(p):
+            return FileResponse(p)
+    return {"message": "API online. Coloque o index.html na raiz."}
