@@ -14,9 +14,13 @@ from typing import Optional
 
 import jwt
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+SECRET_KEY = os.environ.get("JWT_SECRET", os.environ.get("SECRET_KEY", "chave-secreta-padrao-temporaria-123"))
+ALGORITHM = "HS256"
 
 # Na Vercel, apenas a pasta /tmp permite escrita
 IS_VERCEL = os.environ.get("VERCEL") == "1" or "VERCEL" in os.environ
@@ -25,15 +29,25 @@ root_dir = os.path.dirname(current_dir)
 public_path = os.path.join(root_dir, "public")
 
 DB_DIR = "/tmp" if IS_VERCEL else root_dir
-DB_NAME = os.path.join(DB_DIR, "finance.db")
+DB_PATH = os.path.join(DB_DIR, "finance.db")
+DB_NAME = DB_PATH
 UPLOAD_DIR = os.path.join(DB_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Conexão com Turso ou SQLite local
 TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
 TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
-SECRET_KEY = os.environ.get("SECRET_KEY", "finance-secret-key-change-in-production-123")
-ALGORITHM = "HS256"
+
+app = FastAPI(title="Painel Financeiro")
+
+# Habilita CORS para evitar bloqueios de requisições no navegador
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
     try:
@@ -49,17 +63,15 @@ if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
     except ImportError:
         import sqlite3
         def get_db():
-            conn = sqlite3.connect(DB_NAME)
+            conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             return conn
 else:
     import sqlite3
     def get_db():
-        conn = sqlite3.connect(DB_NAME)
+        conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         return conn
-
-app = FastAPI(title="Painel Financeiro Pessoal")
 
 # --- SEGURANÇA E AUTENTICAÇÃO ---
 def hash_password(password: str) -> str:
@@ -127,108 +139,117 @@ def get_current_user(
         return User(id=user["id"], email=user["email"], name=user["name"])
 
 def init_db():
-    with get_db() as conn:
-        # Tabela de Usuários
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                name TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    try:
+        with get_db() as conn:
+            # Tabela de Usuários
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Tabela de Contas
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS bills (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER DEFAULT 1 REFERENCES users(id),
-                title TEXT NOT NULL,
-                category TEXT NOT NULL,
-                amount REAL NOT NULL,
-                amount_paid REAL,
-                due_date DATE NOT NULL,
-                current_installment INTEGER,
-                total_installments INTEGER,
-                is_recurring BOOLEAN DEFAULT 0,
-                payment_code TEXT,
-                account TEXT DEFAULT 'Geral',
-                receipt_path TEXT,
-                status TEXT DEFAULT 'PENDING',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Tabela de Contas
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS bills (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1 REFERENCES users(id),
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    amount_paid REAL,
+                    due_date DATE NOT NULL,
+                    current_installment INTEGER,
+                    total_installments INTEGER,
+                    is_recurring BOOLEAN DEFAULT 0,
+                    payment_code TEXT,
+                    account TEXT DEFAULT 'Geral',
+                    receipt_path TEXT,
+                    status TEXT DEFAULT 'PENDING',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Tabela de Receitas
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS incomes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER DEFAULT 1 REFERENCES users(id),
-                title TEXT NOT NULL,
-                amount REAL NOT NULL,
-                receive_date DATE NOT NULL,
-                is_recurring BOOLEAN DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Tabela de Receitas
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS incomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1 REFERENCES users(id),
+                    title TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    receive_date DATE NOT NULL,
+                    is_recurring BOOLEAN DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Caixinhas de Reserva
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS saving_goals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER DEFAULT 1 REFERENCES users(id),
-                name TEXT NOT NULL,
-                target_amount REAL NOT NULL,
-                current_amount REAL DEFAULT 0.0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Caixinhas de Reserva
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS saving_goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1 REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    target_amount REAL NOT NULL,
+                    current_amount REAL DEFAULT 0.0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Tabela de Tetos por Categoria
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS category_budgets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER DEFAULT 1 REFERENCES users(id),
-                category TEXT NOT NULL,
-                budget_limit REAL NOT NULL,
-                UNIQUE(user_id, category)
-            )
-        """)
+            # Tabela de Tetos por Categoria
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS category_budgets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1 REFERENCES users(id),
+                    category TEXT NOT NULL,
+                    budget_limit REAL NOT NULL,
+                    UNIQUE(user_id, category)
+                )
+            """)
 
-        # Migração segura para colunas novas
-        for table, col_def in [
-            ("bills", "user_id INTEGER DEFAULT 1"),
-            ("bills", "amount_paid REAL"),
-            ("bills", "account TEXT DEFAULT 'Geral'"),
-            ("bills", "receipt_path TEXT"),
-            ("incomes", "user_id INTEGER DEFAULT 1"),
-            ("saving_goals", "user_id INTEGER DEFAULT 1"),
-            ("category_budgets", "user_id INTEGER DEFAULT 1")
-        ]:
+            # Migração segura para colunas novas
+            for table, col_def in [
+                ("bills", "user_id INTEGER DEFAULT 1"),
+                ("bills", "amount_paid REAL"),
+                ("bills", "account TEXT DEFAULT 'Geral'"),
+                ("bills", "receipt_path TEXT"),
+                ("incomes", "user_id INTEGER DEFAULT 1"),
+                ("saving_goals", "user_id INTEGER DEFAULT 1"),
+                ("category_budgets", "user_id INTEGER DEFAULT 1")
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
+                except Exception:
+                    pass
+
+            # Garante usuário padrão inicial (admin) se a tabela de usuários estiver vazia
             try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
+                existing = conn.execute("SELECT id FROM users LIMIT 1").fetchone()
+                if not existing:
+                    default_hash = hash_password("admin123")
+                    conn.execute(
+                        "INSERT INTO users (id, email, password_hash, name) VALUES (1, ?, ?, ?)",
+                        ("admin@financeiro.com", default_hash, "Administrador")
+                    )
             except Exception:
                 pass
 
-        # Garante usuário padrão inicial (admin) se a tabela de usuários estiver vazia
-        try:
-            existing = conn.execute("SELECT id FROM users LIMIT 1").fetchone()
-            if not existing:
-                default_hash = hash_password("admin123")
-                conn.execute(
-                    "INSERT INTO users (id, email, password_hash, name) VALUES (1, ?, ?, ?)",
-                    ("admin@financeiro.com", default_hash, "Administrador")
-                )
-        except Exception:
-            pass
+            try:
+                conn.commit()
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"Erro ao inicializar base de dados: {e}")
 
-        try:
-            conn.commit()
-        except Exception:
-            pass
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
-init_db()
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "db_path": DB_PATH}
 
 # Modelos
 class UserRegister(BaseModel):
