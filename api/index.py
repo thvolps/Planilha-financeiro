@@ -12,6 +12,7 @@ import shutil
 import time
 from typing import Optional
 
+import jwt
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +21,8 @@ from pydantic import BaseModel
 # Conexão com Turso ou SQLite local
 TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
 TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
-SECRET_KEY = os.environ.get("SECRET_KEY", "finance-secret-key-change-in-production-123").encode("utf-8")
+SECRET_KEY = os.environ.get("SECRET_KEY", "finance-secret-key-change-in-production-123")
+ALGORITHM = "HS256"
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
@@ -88,26 +90,11 @@ def create_token(user_id: int, email: str, name: str) -> str:
         "name": name,
         "exp": int(time.time()) + (30 * 86400)  # 30 dias de validade
     }
-    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8").rstrip("=")
-    sig = hmac.new(SECRET_KEY, payload_b64.encode("utf-8"), hashlib.sha256).digest()
-    sig_b64 = base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
-    return f"{payload_b64}.{sig_b64}"
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def decode_token(token: str) -> Optional[dict]:
     try:
-        parts = token.split(".")
-        if len(parts) != 2:
-            return None
-        payload_b64, sig_b64 = parts
-        expected_sig = hmac.new(SECRET_KEY, payload_b64.encode("utf-8"), hashlib.sha256).digest()
-        actual_sig = base64.urlsafe_b64decode(sig_b64 + "=" * ((4 - len(sig_b64) % 4) % 4))
-        if not secrets.compare_digest(expected_sig, actual_sig):
-            return None
-        raw_payload = base64.urlsafe_b64decode(payload_b64 + "=" * ((4 - len(payload_b64) % 4) % 4))
-        payload = json.loads(raw_payload.decode("utf-8"))
-        if payload.get("exp", 0) < time.time():
-            return None
-        return payload
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except Exception:
         return None
 
