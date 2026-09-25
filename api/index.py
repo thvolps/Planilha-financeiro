@@ -18,27 +18,26 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# Na Vercel, apenas a pasta /tmp permite escrita
+IS_VERCEL = os.environ.get("VERCEL") == "1" or "VERCEL" in os.environ
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+public_path = os.path.join(root_dir, "public")
+
+DB_DIR = "/tmp" if IS_VERCEL else root_dir
+DB_NAME = os.path.join(DB_DIR, "finance.db")
+UPLOAD_DIR = os.path.join(DB_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 # Conexão com Turso ou SQLite local
 TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
 TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
 SECRET_KEY = os.environ.get("SECRET_KEY", "finance-secret-key-change-in-production-123")
 ALGORITHM = "HS256"
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(current_dir)
-public_path = os.path.join(root_dir, "public")
-
-if os.environ.get("VERCEL"):
-    UPLOAD_DIR = "/tmp/uploads"
-else:
-    UPLOAD_DIR = os.path.join(root_dir, "uploads")
-
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
     try:
         import libsql_experimental as sqlite3
-        DB_NAME = None
         def get_db():
             conn = sqlite3.connect(
                 database=TURSO_DATABASE_URL,
@@ -49,14 +48,12 @@ if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
             return conn
     except ImportError:
         import sqlite3
-        DB_NAME = os.path.join(root_dir, "finance.db")
         def get_db():
             conn = sqlite3.connect(DB_NAME)
             conn.row_factory = sqlite3.Row
             return conn
 else:
     import sqlite3
-    DB_NAME = os.path.join(root_dir, "finance.db")
     def get_db():
         conn = sqlite3.connect(DB_NAME)
         conn.row_factory = sqlite3.Row
