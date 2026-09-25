@@ -1,4 +1,3 @@
-import sqlite3
 import calendar
 import io
 import csv
@@ -11,26 +10,49 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-app = FastAPI(title="Painel Financeiro Pessoal")
+# Conexão com Turso ou SQLite local
+TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
 
-# Configuração de caminhos e persistência
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
 public_path = os.path.join(root_dir, "public")
 
 if os.environ.get("VERCEL"):
-    DB_NAME = "/tmp/finance.db"
     UPLOAD_DIR = "/tmp/uploads"
 else:
-    DB_NAME = os.path.join(root_dir, "finance.db")
     UPLOAD_DIR = os.path.join(root_dir, "uploads")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-def get_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
+    try:
+        import libsql_experimental as sqlite3
+        DB_NAME = None
+        def get_db():
+            conn = sqlite3.connect(
+                database=TURSO_DATABASE_URL,
+                auth_token=TURSO_AUTH_TOKEN,
+                autocommit=True
+            )
+            conn.row_factory = sqlite3.Row
+            return conn
+    except ImportError:
+        import sqlite3
+        DB_NAME = os.path.join(root_dir, "finance.db")
+        def get_db():
+            conn = sqlite3.connect(DB_NAME)
+            conn.row_factory = sqlite3.Row
+            return conn
+else:
+    import sqlite3
+    DB_NAME = os.path.join(root_dir, "finance.db")
+    def get_db():
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+app = FastAPI(title="Painel Financeiro Pessoal")
 
 def init_db():
     with get_db() as conn:
@@ -82,9 +104,12 @@ def init_db():
         for col_def in ["amount_paid REAL", "account TEXT DEFAULT 'Geral'", "receipt_path TEXT"]:
             try:
                 conn.execute(f"ALTER TABLE bills ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
+            except Exception:
                 pass
-        conn.commit()
+        try:
+            conn.commit()
+        except Exception:
+            pass
 
 init_db()
 
@@ -437,6 +462,8 @@ def export_csv(month: int, year: int):
 
 @app.get("/api/backup")
 def download_backup():
+    if not DB_NAME or not os.path.exists(DB_NAME):
+        raise HTTPException(status_code=400, detail="Backup SQLite direto disponível apenas em modo local.")
     return FileResponse(DB_NAME, media_type="application/x-sqlite3", filename=f"finance_backup_{date.today().isoformat()}.db")
 
 @app.get("/manifest.json")
