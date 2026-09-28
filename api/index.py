@@ -16,7 +16,7 @@ from typing import Optional
 
 import jwt
 from ofxparse import OfxParser
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -99,7 +99,9 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def create_token(user_id: int, email: str, name: str) -> str:
     payload = {
+        "sub": str(user_id),
         "user_id": user_id,
+        "id": user_id,
         "email": email,
         "name": name,
         "exp": int(time.time()) + (30 * 86400)  # 30 dias de validade
@@ -108,7 +110,7 @@ def create_token(user_id: int, email: str, name: str) -> str:
 
 def decode_token(token: str) -> Optional[dict]:
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM, "HS256"])
     except Exception:
         return None
 
@@ -122,13 +124,28 @@ class User(BaseModel):
 
 def get_current_user(
     authorization: Optional[str] = Header(None),
-    token: Optional[str] = Query(None)
+    token: Optional[str] = Query(None),
+    access_token: Optional[str] = Query(None),
+    x_token: Optional[str] = Header(None, alias="x-token"),
+    x_access_token: Optional[str] = Header(None, alias="x-access-token"),
+    auth_token_cookie: Optional[str] = Cookie(None, alias="auth_token")
 ) -> User:
     auth_token = None
-    if authorization and authorization.startswith("Bearer "):
-        auth_token = authorization.split(" ", 1)[1].strip()
-    elif token:
+    if isinstance(authorization, str) and authorization.strip():
+        if authorization.lower().startswith("bearer "):
+            auth_token = authorization.split(" ", 1)[1].strip()
+        else:
+            auth_token = authorization.strip()
+    elif isinstance(token, str) and token.strip():
         auth_token = token.strip()
+    elif isinstance(access_token, str) and access_token.strip():
+        auth_token = access_token.strip()
+    elif isinstance(x_token, str) and x_token.strip():
+        auth_token = x_token.strip()
+    elif isinstance(x_access_token, str) and x_access_token.strip():
+        auth_token = x_access_token.strip()
+    elif isinstance(auth_token_cookie, str) and auth_token_cookie.strip():
+        auth_token = auth_token_cookie.strip()
 
     if not auth_token:
         raise HTTPException(status_code=401, detail="Sessão não autenticada")
@@ -137,8 +154,12 @@ def get_current_user(
     if not payload:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada")
 
+    uid = payload.get("user_id") or payload.get("id") or payload.get("sub")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Token sem identificador de usuário")
+
     with get_db() as conn:
-        user = conn.execute("SELECT id, email, name FROM users WHERE id = ?", (payload["user_id"],)).fetchone()
+        user = conn.execute("SELECT id, email, name FROM users WHERE id = ?", (int(uid),)).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="Usuário não encontrado")
         return User(id=user["id"], email=user["email"], name=user["name"])
@@ -278,12 +299,14 @@ def health():
 
 # Modelos
 class UserRegister(BaseModel):
-    name: str
-    email: str
+    name: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
     password: str
 
 class UserLogin(BaseModel):
-    email: str
+    email: Optional[str] = None
+    username: Optional[str] = None
     password: str
 
 class BillCreate(BaseModel):
@@ -368,15 +391,17 @@ def normalize_date_str(val: str) -> str:
 
 # --- ROTAS DE AUTENTICAÇÃO ---
 @app.post("/api/auth/register")
+@app.post("/api/register")
+@app.post("/api/user/register")
 def register(data: UserRegister):
-    email = data.email.strip().lower()
-    name = data.name.strip()
+    email = (data.email or data.username or "").strip().lower()
+    name = (data.name or data.username or (email.split("@")[0] if "@" in email else "")).strip()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="E-mail inválido")
     if len(data.password) < 4:
         raise HTTPException(status_code=400, detail="Senha deve ter no mínimo 4 caracteres")
     if not name:
-        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        name = email.split("@")[0].capitalize()
 
     with get_db() as conn:
         existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
@@ -397,13 +422,18 @@ def register(data: UserRegister):
         token = create_token(user_id, email, name)
         return {
             "token": token,
+            "access_token": token,
+            "token_type": "bearer",
             "user": {"id": user_id, "name": name, "email": email},
             "message": "Conta criada com sucesso!"
         }
 
 @app.post("/api/auth/login")
+@app.post("/api/login")
 def login(data: UserLogin):
-    email = data.email.strip().lower()
+    email = (data.email or data.username or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="E-mail ou nome de usuário é obrigatório")
     with get_db() as conn:
         user = conn.execute("SELECT id, email, password_hash, name FROM users WHERE email = ?", (email,)).fetchone()
         if not user or not verify_password(data.password, user["password_hash"]):
@@ -412,13 +442,69 @@ def login(data: UserLogin):
         token = create_token(user["id"], user["email"], user["name"])
         return {
             "token": token,
+            "access_token": token,
+            "token_type": "bearer",
             "user": {"id": user["id"], "name": user["name"], "email": user["email"]},
             "message": "Login realizado com sucesso!"
         }
 
+@app.post("/api/auth/token")
+@app.post("/api/token")
+async def token_endpoint(request: Request):
+    content_type = request.headers.get("content-type", "")
+    username = ""
+    password = ""
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            username = body.get("username") or body.get("email") or ""
+            password = body.get("password") or ""
+        except Exception:
+            pass
+    else:
+        try:
+            form = await request.form()
+            username = form.get("username") or form.get("email") or ""
+            password = form.get("password") or ""
+        except Exception:
+            pass
+
+    email = username.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Credenciais incompletas")
+
+    with get_db() as conn:
+        user = conn.execute("SELECT id, email, password_hash, name FROM users WHERE email = ?", (email,)).fetchone()
+        if not user or not verify_password(password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="E-mail ou senha incorretos")
+
+        token = create_token(user["id"], user["email"], user["name"])
+        return {
+            "access_token": token,
+            "token": token,
+            "token_type": "bearer",
+            "user": {"id": user["id"], "name": user["name"], "email": user["email"]}
+        }
+
 @app.get("/api/auth/me")
-def get_me(current_user: dict = Depends(get_current_user)):
-    return current_user
+@app.get("/api/me")
+@app.get("/api/user/me")
+@app.get("/api/user")
+def get_me(current_user: User = Depends(get_current_user)):
+    user_dict = {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email
+    }
+    return {
+        **user_dict,
+        "user": user_dict
+    }
+
+@app.post("/api/auth/logout")
+@app.post("/api/logout")
+def logout():
+    return {"message": "Sessão encerrada com sucesso"}
 
 # Endpoint para auto-sugestão de categoria com base no histórico do usuário
 @app.get("/api/bills/suggest-category")
