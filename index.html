@@ -3,16 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#020617">
-  <title>Painel Financeiro Pessoal</title>
+  <title>Painel Financeiro</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8 font-sans antialiased">
 
-  <div class="max-w-6xl mx-auto space-y-6">
+  <!-- TELA DE LOGIN / CADASTRO (Aparece se deslogado) -->
+  <div id="auth-screen" class="fixed inset-0 bg-slate-950 z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 w-full max-w-md shadow-2xl space-y-6">
+      <div class="text-center space-y-1">
+        <div class="inline-flex p-3 rounded-2xl bg-emerald-500/10 text-emerald-400 mb-2">
+          <i class="fa-solid fa-wallet text-2xl"></i>
+        </div>
+        <h2 id="auth-title" class="text-2xl font-bold text-white tracking-tight">Entrar no Painel</h2>
+        <p id="auth-subtitle" class="text-xs text-slate-400">Acesse suas finanças com isolamento total</p>
+      </div>
+
+      <form id="auth-form" onsubmit="handleAuth(event)" class="space-y-4">
+        <div id="auth-name-box" class="hidden">
+          <label class="text-xs text-slate-400">Nome Completo</label>
+          <input type="text" id="auth-name" placeholder="Ex: Alex Silva" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 outline-none mt-1">
+        </div>
+
+        <div>
+          <label class="text-xs text-slate-400">E-mail</label>
+          <input type="email" id="auth-email" required placeholder="seu@email.com" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 outline-none mt-1">
+        </div>
+
+        <div>
+          <label class="text-xs text-slate-400">Senha</label>
+          <input type="password" id="auth-password" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 outline-none mt-1">
+        </div>
+
+        <button type="submit" id="auth-submit-btn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition text-sm shadow-lg shadow-emerald-950/50">
+          Entrar
+        </button>
+      </form>
+
+      <div class="text-center">
+        <button type="button" onclick="toggleAuthMode()" id="auth-toggle-btn" class="text-xs text-slate-400 hover:text-emerald-400 transition underline underline-offset-4">
+          Não tem conta? Crie uma agora gratuitamente
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APLICAÇÃO PRINCIPAL -->
+  <div id="app-container" class="max-w-6xl mx-auto space-y-6 hidden">
     
     <!-- Cabeçalho Principal -->
     <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
@@ -20,12 +59,24 @@
         <h1 class="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
           <i class="fa-solid fa-wallet text-emerald-400"></i> Gestão Financeira Integrada
         </h1>
-        <p class="text-sm text-slate-400">Fluxo de caixa, comprovantes anexados e caixinhas de reserva</p>
+        <p class="text-sm text-slate-400 flex items-center gap-2">
+          <span>Olá, <strong id="user-display-name" class="text-slate-200">Usuário</strong></span>
+          <span class="text-slate-600">•</span>
+          <button onclick="logout()" class="text-xs text-rose-400 hover:underline">Sair</button>
+        </p>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
         <button onclick="togglePrivacyMode()" id="btn-privacy" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition" title="Ocultar / Mostrar Valores">
           <i class="fa-solid fa-eye-slash" id="privacy-icon"></i>
+        </button>
+
+        <button onclick="openCardsModal()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Cartões de Crédito">
+          <i class="fa-solid fa-credit-card text-purple-400"></i> Cartões
+        </button>
+
+        <button onclick="openTelegramModal()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Alertas Telegram">
+          <i class="fa-brands fa-telegram text-sky-400"></i> Telegram
         </button>
 
         <button onclick="openGoalsModal()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Metas & Caixinhas">
@@ -36,27 +87,14 @@
           <i class="fa-solid fa-calendar-days text-cyan-400"></i> Visão Anual
         </button>
 
-        <button onclick="exportMonthCSV()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Exportar CSV">
+        <button onclick="exportMonthCSV()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5">
           <i class="fa-solid fa-file-csv text-emerald-400"></i> CSV
         </button>
 
-        <button onclick="downloadBackup()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Baixar Backup Local">
-          <i class="fa-solid fa-download"></i> Backup
+        <button onclick="document.getElementById('statement-file-input').click()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Importar Extrato OFX ou CSV">
+          <i class="fa-solid fa-file-import text-amber-400"></i> Extrato
         </button>
-
-        <button onclick="openImportModal()" class="bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm" title="Importar Extrato OFX ou CSV">
-          <i class="fa-solid fa-file-import"></i> Extrato
-        </button>
-
-        <!-- Perfil do Usuário -->
-        <div id="user-profile-badge" class="hidden items-center gap-2 bg-slate-900/90 border border-slate-800 text-slate-300 text-xs px-3 py-2 rounded-xl">
-          <i class="fa-solid fa-circle-user text-emerald-400 text-sm"></i>
-          <span id="user-display-name" class="font-medium max-w-[120px] truncate">Usuário</span>
-          <button onclick="logout()" class="text-rose-400 hover:text-rose-300 ml-1 transition" title="Sair da Conta">
-            <i class="fa-solid fa-arrow-right-from-bracket"></i>
-          </button>
-        </div>
-
+        <input type="file" id="statement-file-input" accept=".ofx,.csv" class="hidden" onchange="uploadStatement(event)">
         <button onclick="openIncomeModal()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Atalho: Tecla R">
           <i class="fa-solid fa-arrow-down"></i> + Receita <kbd class="hidden md:inline bg-sky-700/60 px-1.5 py-0.5 rounded text-[10px] ml-1">R</kbd>
         </button>
@@ -128,7 +166,7 @@
       </div>
     </section>
 
-    <!-- Caixinhas de Reserva Ativas (Cards Rápidos) -->
+    <!-- Caixinhas de Reserva Ativas -->
     <section class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3">
       <div class="flex items-center justify-between">
         <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -138,12 +176,10 @@
           Gerenciar Caixinhas
         </button>
       </div>
-      <div id="goals-summary-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-        <!-- Injetado dinamicamente -->
-      </div>
+      <div id="goals-summary-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>
     </section>
 
-    <!-- Linha do Tempo e Saldo Mínimo Projetado -->
+    <!-- Linha do Tempo Quinzenal -->
     <section class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -223,6 +259,10 @@
         <h3 class="font-bold text-sm text-white flex items-center gap-2">
           <i class="fa-solid fa-hand-holding-dollar text-sky-400"></i> Entradas / Receitas Registradas
         </h3>
+        <button onclick="document.getElementById('statement-file-input').click()" class="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5" title="Importar Extrato OFX ou CSV">
+          <i class="fa-solid fa-file-import text-amber-400"></i> Extrato
+        </button>
+        <input type="file" id="statement-file-input" accept=".ofx,.csv" class="hidden" onchange="uploadStatement(event)">
         <button onclick="openIncomeModal()" class="text-xs text-sky-400 hover:text-sky-300 font-medium">
           + Nova Entrada
         </button>
@@ -230,7 +270,7 @@
       <div id="incomes-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5"></div>
     </section>
 
-    <!-- Tabela de Contas com Comprovante -->
+    <!-- Tabela de Contas -->
     <main class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
       <div class="p-4 border-b border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
         <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -276,6 +316,85 @@
 
   </div>
 
+  
+  <!-- Modal Cartões de Crédito -->
+  <div id="modal-cards" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-white text-lg flex items-center gap-2">
+          <i class="fa-solid fa-credit-card text-purple-400"></i> Gestão de Cartões de Crédito
+        </h3>
+        <button onclick="closeCardsModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <form id="form-card" onsubmit="submitNewCard(event)" class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+        <div class="text-xs font-semibold text-slate-300">Adicionar Novo Cartão</div>
+        <div>
+          <label class="text-[11px] text-slate-400">Nome do Cartão / Banco</label>
+          <input id="card-name" required type="text" placeholder="Ex: Nubank Ultravioleta" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none">
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="text-[11px] text-slate-400">Dia Fecho</label>
+            <input id="card-closing" required type="number" min="1" max="31" placeholder="Ex: 25" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400">Dia Vencimento</label>
+            <input id="card-due" required type="number" min="1" max="31" placeholder="Ex: 5" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400">Limite (R$)</label>
+            <input id="card-limit" step="100" type="number" placeholder="Ex: 5000" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none">
+          </div>
+        </div>
+        <button type="submit" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-semibold py-2 rounded-lg text-xs transition">Registar Cartão</button>
+      </form>
+
+      <div class="space-y-2">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Cartões Configurados</div>
+        <div id="cards-list" class="space-y-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Telegram Alertas -->
+  <div id="modal-telegram" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-white text-base flex items-center gap-2">
+          <i class="fa-brands fa-telegram text-sky-400 text-lg"></i> Alertas no Telegram
+        </h3>
+        <button onclick="closeTelegramModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div class="text-xs text-slate-400 leading-relaxed bg-slate-950 p-3 rounded-xl border border-slate-800">
+        Receba avisos automáticos de contas atrasadas ou a vencer nos próximos 3 dias diretamente no seu telemóvel via Bot do Telegram.
+      </div>
+
+      <form id="form-telegram" onsubmit="submitTelegramSettings(event)" class="space-y-3">
+        <div>
+          <label class="text-xs text-slate-400">Bot Token (obtido com @BotFather)</label>
+          <input id="tg-token" required type="text" placeholder="Ex: 123456789:ABCdefGhI..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-sky-500 outline-none mt-1">
+        </div>
+        <div>
+          <label class="text-xs text-slate-400">Chat ID (seu ID com @userinfobot)</label>
+          <input id="tg-chat" required type="text" placeholder="Ex: 987654321" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-sky-500 outline-none mt-1">
+        </div>
+        <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-semibold py-2.5 rounded-xl transition text-xs">Guardar Configuração</button>
+      </form>
+
+      <div class="flex gap-2 pt-2 border-t border-slate-800">
+        <button type="button" onclick="testTelegramMessage()" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 py-2 rounded-xl text-xs font-semibold transition">
+          <i class="fa-solid fa-paper-plane mr-1 text-sky-400"></i> Testar Conexão
+        </button>
+        <button type="button" onclick="sendTelegramAlertsNow()" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 text-emerald-300 hover:text-white py-2 rounded-xl text-xs font-semibold transition">
+          <i class="fa-solid fa-bell mr-1"></i> Disparar Alertas
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAIS DE OPERAÇÃO -->
   <!-- Modal Cadastrar Nova Despesa -->
   <div id="modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 space-y-4">
@@ -305,8 +424,21 @@
           </div>
         </div>
 
+        <div class="grid grid-cols-2 gap-2.5 bg-slate-950 p-2.5 rounded-xl border border-slate-800/80">
+          <div>
+            <label class="text-[11px] text-purple-300">Cartão de Crédito (Opcional)</label>
+            <select id="in-card-select" onchange="handleCardSelected()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none mt-1">
+              <option value="">Nenhum (Despesa Comum)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400">Data da Compra</label>
+            <input id="in-purchase-date" type="date" onchange="handleCardSelected()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none mt-1">
+          </div>
+        </div>
+
         <div>
-          <label class="text-xs text-slate-400">Primeiro Vencimento</label>
+          <label class="text-xs text-slate-400">Primeiro Vencimento (Fatura)</label>
           <input id="in-due-date" required type="date" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500 outline-none">
         </div>
 
@@ -337,7 +469,7 @@
     </div>
   </div>
 
-  <!-- Modal Liquidar com Upload de Comprovante -->
+  <!-- Modal Liquidar com Upload -->
   <div id="modal-pay" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-6 space-y-4">
       <div class="flex justify-between items-center border-b border-slate-800 pb-3">
@@ -367,7 +499,7 @@
     </div>
   </div>
 
-  <!-- Modal Caixinhas de Reserva -->
+  <!-- Modal Caixinhas -->
   <div id="modal-goals" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
       <div class="flex justify-between items-center border-b border-slate-800 pb-3">
@@ -377,7 +509,6 @@
         <button onclick="closeGoalsModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
       </div>
 
-      <!-- Criar Nova Caixinha -->
       <form id="form-goal" onsubmit="submitNewGoal(event)" class="bg-slate-950 p-4 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
         <div>
           <label class="text-[11px] text-slate-400">Nome da Caixinha</label>
@@ -392,10 +523,7 @@
         </div>
       </form>
 
-      <!-- Lista de Caixinhas com Aporte Rápido -->
-      <div id="goals-full-list" class="space-y-3">
-        <!-- Renderizado dinamicamente -->
-      </div>
+      <div id="goals-full-list" class="space-y-3"></div>
     </div>
   </div>
 
@@ -507,7 +635,7 @@
     </div>
   </div>
 
-  <!-- Modal Definir Tetos de Categoria -->
+  <!-- Modal Definir Tetos -->
   <div id="modal-budget" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-6 space-y-4">
       <div class="flex justify-between items-center border-b border-slate-800 pb-3">
@@ -529,247 +657,11 @@
     </div>
   </div>
 
-  <!-- Modal de Importação de Extrato Bancário OFX/CSV -->
-  <div id="modal-import" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50 transition-opacity">
-    <div class="bg-slate-900 border border-slate-800 w-full max-w-md p-6 rounded-3xl shadow-2xl space-y-4">
-      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-        <h3 class="font-bold text-white text-base flex items-center gap-2">
-          <i class="fa-solid fa-file-import text-indigo-400"></i> Importar Extrato Bancário
-        </h3>
-        <button onclick="closeImportModal()" class="text-slate-400 hover:text-white transition"><i class="fa-solid fa-xmark text-lg"></i></button>
-      </div>
-
-      <p class="text-xs text-slate-400 leading-relaxed">
-        Envie o extrato emitido pelo seu banco em formato <strong class="text-indigo-400">.OFX</strong> (Nubank, Itaú, Inter, Bradesco, etc.) ou <strong class="text-indigo-400">.CSV</strong> para importar transações automaticamente.
-      </p>
-
-      <form id="form-import" onsubmit="submitImportStatement(event)" class="space-y-4">
-        <div class="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-2xl p-6 text-center transition cursor-pointer bg-slate-950/40 relative">
-          <input type="file" id="import-file" required accept=".ofx,.csv" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onchange="updateImportFileName()">
-          <div id="import-file-display" class="space-y-2">
-            <i class="fa-solid fa-cloud-arrow-up text-3xl text-indigo-400"></i>
-            <div id="import-file-text" class="text-xs font-semibold text-slate-200">Clique para selecionar ou arraste o arquivo</div>
-            <div class="text-[11px] text-slate-500">Formatos aceitos: .OFX ou .CSV</div>
-          </div>
-        </div>
-
-        <div id="import-alert" class="hidden text-xs p-3 rounded-xl"></div>
-
-        <button type="submit" id="btn-import-submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-950">
-          <i class="fa-solid fa-upload"></i> Processar Extrato
-        </button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal de Autenticação / Login / Cadastro -->
-  <div id="auth-modal" class="fixed inset-0 bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4 z-50 transition-opacity">
-    <div class="bg-slate-900 border border-slate-800 w-full max-w-md p-6 rounded-3xl shadow-2xl space-y-5">
-      <div class="text-center space-y-1">
-        <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 mb-2">
-          <i class="fa-solid fa-wallet text-2xl"></i>
-        </div>
-        <h2 class="text-xl font-bold text-white tracking-tight">Meu Financeiro</h2>
-        <p class="text-xs text-slate-400">Acesse sua conta para isolar e gerenciar suas finanças</p>
-      </div>
-
-      <!-- Abas Entrar / Cadastrar -->
-      <div class="flex border-b border-slate-800">
-        <button type="button" id="tab-login" onclick="switchAuthTab('login')" class="flex-1 py-2 text-center text-sm font-semibold border-b-2 border-emerald-500 text-emerald-400 transition">
-          Entrar
-        </button>
-        <button type="button" id="tab-register" onclick="switchAuthTab('register')" class="flex-1 py-2 text-center text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition">
-          Criar Conta
-        </button>
-      </div>
-
-      <!-- Alerta de Erro -->
-      <div id="auth-error" class="hidden bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3 rounded-xl flex items-center gap-2">
-        <i class="fa-solid fa-triangle-exclamation"></i>
-        <span id="auth-error-msg"></span>
-      </div>
-
-      <!-- Formulário -->
-      <form id="auth-form" onsubmit="handleAuthSubmit(event)" class="space-y-4">
-        <div id="auth-name-container" class="hidden space-y-1">
-          <label class="text-xs font-semibold text-slate-400">Nome Completo</label>
-          <div class="relative">
-            <i class="fa-regular fa-user absolute left-3.5 top-3.5 text-slate-500 text-xs"></i>
-            <input type="text" id="auth-name" placeholder="Ex: Thiago Volponi" class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500">
-          </div>
-        </div>
-
-        <div class="space-y-1">
-          <label class="text-xs font-semibold text-slate-400">E-mail</label>
-          <div class="relative">
-            <i class="fa-regular fa-envelope absolute left-3.5 top-3.5 text-slate-500 text-xs"></i>
-            <input type="email" id="auth-email" required placeholder="seu@email.com" class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500">
-          </div>
-        </div>
-
-        <div class="space-y-1">
-          <label class="text-xs font-semibold text-slate-400">Senha</label>
-          <div class="relative">
-            <i class="fa-solid fa-lock absolute left-3.5 top-3.5 text-slate-500 text-xs"></i>
-            <input type="password" id="auth-password" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500">
-          </div>
-        </div>
-
-        <button type="submit" id="auth-submit-btn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-950">
-          <i class="fa-solid fa-right-to-bracket"></i>
-          <span id="auth-btn-label">Entrar no Painel</span>
-        </button>
-      </form>
-
-      <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 text-center leading-relaxed">
-        💡 <span class="text-slate-300">Conta padrão inicial:</span> <code class="text-emerald-400 bg-slate-900 px-1 py-0.5 rounded">admin@financeiro.com</code> / <code class="text-emerald-400 bg-slate-900 px-1 py-0.5 rounded">admin123</code>
-      </div>
-    </div>
-  </div>
-
   <script>
-    // --- AUTENTICAÇÃO E SESSÃO ---
+    let isRegisterMode = false;
     let currentUser = null;
-    let authMode = "login";
+    let authToken = localStorage.getItem("auth_token") || null;
 
-    const originalFetch = window.fetch;
-    window.fetch = async function(url, options = {}) {
-      options = options || {};
-      options.headers = options.headers || {};
-      const token = localStorage.getItem("auth_token");
-
-      if (token) {
-        if (options.headers instanceof Headers) {
-          if (!options.headers.has("Authorization")) {
-            options.headers.set("Authorization", "Bearer " + token);
-          }
-        } else if (Array.isArray(options.headers)) {
-          options.headers.push(["Authorization", "Bearer " + token]);
-        } else {
-          options.headers["Authorization"] = "Bearer " + token;
-        }
-      }
-
-      const response = await originalFetch(url, options);
-      if (response.status === 401 && typeof url === "string" && !url.includes("/api/auth/")) {
-        handleUnauthorized();
-      }
-      return response;
-    };
-
-    function switchAuthTab(mode) {
-      authMode = mode;
-      const tabLogin = document.getElementById("tab-login");
-      const tabReg = document.getElementById("tab-register");
-      const nameContainer = document.getElementById("auth-name-container");
-      const btnLabel = document.getElementById("auth-btn-label");
-      const authError = document.getElementById("auth-error");
-      authError.classList.add("hidden");
-
-      if (mode === "login") {
-        tabLogin.className = "flex-1 py-2 text-center text-sm font-semibold border-b-2 border-emerald-500 text-emerald-400 transition";
-        tabReg.className = "flex-1 py-2 text-center text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition";
-        nameContainer.classList.add("hidden");
-        btnLabel.innerText = "Entrar no Painel";
-      } else {
-        tabReg.className = "flex-1 py-2 text-center text-sm font-semibold border-b-2 border-emerald-500 text-emerald-400 transition";
-        tabLogin.className = "flex-1 py-2 text-center text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition";
-        nameContainer.classList.remove("hidden");
-        btnLabel.innerText = "Criar Minha Conta";
-      }
-    }
-
-    async function handleAuthSubmit(e) {
-      e.preventDefault();
-      const email = document.getElementById("auth-email").value;
-      const password = document.getElementById("auth-password").value;
-      const name = document.getElementById("auth-name").value;
-      const authError = document.getElementById("auth-error");
-      const authErrorMsg = document.getElementById("auth-error-msg");
-      const submitBtn = document.getElementById("auth-submit-btn");
-
-      authError.classList.add("hidden");
-      submitBtn.disabled = true;
-
-      try {
-        const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
-        const payload = authMode === "login" ? { email, password } : { email, password, name };
-
-        const res = await originalFetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          authErrorMsg.innerText = data.detail || "Falha na autenticação.";
-          authError.classList.remove("hidden");
-          return;
-        }
-
-        localStorage.setItem("auth_token", data.token);
-        localStorage.setItem("auth_user", JSON.stringify(data.user));
-        currentUser = data.user;
-        updateUserBadge(currentUser);
-        document.getElementById("auth-modal").classList.add("hidden");
-        loadAll();
-      } catch (err) {
-        authErrorMsg.innerText = "Erro ao conectar com o servidor.";
-        authError.classList.remove("hidden");
-      } finally {
-        submitBtn.disabled = false;
-      }
-    }
-
-    function handleUnauthorized() {
-      localStorage.removeItem("auth_token");
-      localStorage.removeItem("auth_user");
-      currentUser = null;
-      updateUserBadge(null);
-      document.getElementById("auth-modal").classList.remove("hidden");
-    }
-
-    function logout() {
-      handleUnauthorized();
-    }
-
-    function updateUserBadge(user) {
-      const badge = document.getElementById("user-profile-badge");
-      const nameSpan = document.getElementById("user-display-name");
-      if (user && user.name) {
-        nameSpan.innerText = user.name;
-        badge.classList.remove("hidden");
-        badge.classList.add("flex");
-      } else {
-        badge.classList.add("hidden");
-        badge.classList.remove("flex");
-      }
-    }
-
-    async function checkAuthOnStartup() {
-      const token = localStorage.getItem("auth_token");
-      if (!token) {
-        handleUnauthorized();
-        return false;
-      }
-      try {
-        const res = await originalFetch("/api/auth/me", {
-          headers: { "Authorization": "Bearer " + token }
-        });
-        if (!res.ok) {
-          handleUnauthorized();
-          return false;
-        }
-        currentUser = await res.json();
-        updateUserBadge(currentUser);
-        document.getElementById("auth-modal").classList.add("hidden");
-        return true;
-      } catch (e) {
-        handleUnauthorized();
-        return false;
-      }
-    }
     let viewDate = new Date();
     let billsData = [];
     let incomesData = [];
@@ -778,6 +670,120 @@
     let chartInstance = null;
     let projectionChartInstance = null;
     let isPrivacyMode = localStorage.getItem("privacy_mode") === "true";
+
+    function getAuthHeaders(extraHeaders = {}) {
+      return {
+        "Authorization": `Bearer ${authToken}`,
+        ...extraHeaders
+      };
+    }
+
+    function toggleAuthMode() {
+      isRegisterMode = !isRegisterMode;
+      const title = document.getElementById("auth-title");
+      const subtitle = document.getElementById("auth-subtitle");
+      const nameBox = document.getElementById("auth-name-box");
+      const submitBtn = document.getElementById("auth-submit-btn");
+      const toggleBtn = document.getElementById("auth-toggle-btn");
+
+      if (isRegisterMode) {
+        title.innerText = "Criar Nova Conta";
+        subtitle.innerText = "Cadastre-se para ter seu painel isolado e seguro";
+        nameBox.classList.remove("hidden");
+        submitBtn.innerText = "Cadastrar e Entrar";
+        toggleBtn.innerText = "Já tem uma conta? Fazer login";
+      } else {
+        title.innerText = "Entrar no Painel";
+        subtitle.innerText = "Acesse suas finanças com isolamento total";
+        nameBox.classList.add("hidden");
+        submitBtn.innerText = "Entrar";
+        toggleBtn.innerText = "Não tem conta? Crie uma agora gratuitamente";
+      }
+    }
+
+    async function handleAuth(e) {
+      e.preventDefault();
+      const email = document.getElementById("auth-email").value;
+      const password = document.getElementById("auth-password").value;
+
+      try {
+        let res;
+        if (isRegisterMode) {
+          const name = document.getElementById("auth-name").value;
+          res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, email, password })
+          });
+        } else {
+          res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password })
+          });
+        }
+
+        const textResponse = await res.text();
+        let data;
+        try {
+          data = JSON.parse(textResponse);
+        } catch (_) {
+          data = { detail: textResponse };
+        }
+
+        if (!res.ok) {
+          alert("Erro (" + res.status + "): " + (data.detail || textResponse || "Falha na requisição."));
+          return;
+        }
+
+        authToken = data.token;
+        currentUser = data.user;
+        localStorage.setItem("auth_token", authToken);
+        showApp();
+      } catch (err) {
+        alert("Erro de ligação: " + (err.message || "Não foi possível comunicar com o servidor."));
+      }
+    }
+
+    async function checkAuth() {
+      if (!authToken) {
+        showAuth();
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/auth/me", { headers: getAuthHeaders() });
+        if (res.ok) {
+          currentUser = await res.json();
+          showApp();
+        } else {
+          logout();
+        }
+      } catch (err) {
+        showAuth();
+      }
+    }
+
+    function showAuth() {
+      document.getElementById("auth-screen").classList.remove("hidden");
+      document.getElementById("app-container").classList.add("hidden");
+    }
+
+    function showApp() {
+      document.getElementById("auth-screen").classList.add("hidden");
+      document.getElementById("app-container").classList.remove("hidden");
+      document.getElementById("user-display-name").innerText = currentUser ? currentUser.name : "Usuário";
+      updatePrivacyIcon();
+      updateMonthDisplay();
+      loadAll();
+    }
+
+    function logout() {
+      localStorage.removeItem("auth_token");
+      authToken = null;
+      currentUser = null;
+      showAuth();
+    }
 
     const formatCurrency = (val) => {
       if (isPrivacyMode) return "R$ •••••";
@@ -817,26 +823,29 @@
     }
 
     async function loadAll() {
-      if (!localStorage.getItem("auth_token")) return;
+      if (!authToken) return;
       await loadBudgets();
       await loadIncomes();
       await loadGoals();
       await loadBills();
       await loadProjection();
+      await loadCards();
     }
 
     async function loadBudgets() {
       try {
-        const res = await fetch("/api/budgets");
-        budgetsData = await res.json();
+        const res = await fetch("/api/budgets", { headers: getAuthHeaders() });
+        if (res.ok) budgetsData = await res.json();
       } catch (err) { console.error(err); }
     }
 
     async function loadGoals() {
       try {
-        const res = await fetch("/api/goals");
-        goalsData = await res.json();
-        renderGoals();
+        const res = await fetch("/api/goals", { headers: getAuthHeaders() });
+        if (res.ok) {
+          goalsData = await res.json();
+          renderGoals();
+        }
       } catch (err) { console.error(err); }
     }
 
@@ -844,9 +853,11 @@
       const m = viewDate.getMonth() + 1;
       const y = viewDate.getFullYear();
       try {
-        const res = await fetch(`/api/incomes?month=${m}&year=${y}`);
-        incomesData = await res.json();
-        renderIncomes();
+        const res = await fetch(`/api/incomes?month=${m}&year=${y}`, { headers: getAuthHeaders() });
+        if (res.ok) {
+          incomesData = await res.json();
+          renderIncomes();
+        }
       } catch (err) { console.error(err); }
     }
 
@@ -854,11 +865,13 @@
       const m = viewDate.getMonth() + 1;
       const y = viewDate.getFullYear();
       try {
-        const res = await fetch(`/api/bills?month=${m}&year=${y}`);
-        billsData = await res.json();
-        updateAccountOptions();
-        calculateMetrics();
-        renderChart();
+        const res = await fetch(`/api/bills?month=${m}&year=${y}`, { headers: getAuthHeaders() });
+        if (res.ok) {
+          billsData = await res.json();
+          updateAccountOptions();
+          calculateMetrics();
+          renderChart();
+        }
       } catch (err) { console.error(err); }
     }
 
@@ -866,9 +879,11 @@
       const m = viewDate.getMonth() + 1;
       const y = viewDate.getFullYear();
       try {
-        const res = await fetch(`/api/dashboard/projection?start_month=${m}&start_year=${y}`);
-        const projData = await res.json();
-        renderProjectionChart(projData);
+        const res = await fetch(`/api/dashboard/projection?start_month=${m}&start_year=${y}`, { headers: getAuthHeaders() });
+        if (res.ok) {
+          const projData = await res.json();
+          renderProjectionChart(projData);
+        }
       } catch (err) { console.error(err); }
     }
 
@@ -879,7 +894,7 @@
       fullList.innerHTML = "";
 
       if (goalsData.length === 0) {
-        summary.innerHTML = `<div class="col-span-3 text-xs text-slate-500">Nenhuma caixinha criada. Clique em "Gerenciar Caixinhas" para começar a guardar sua sobra.</div>`;
+        summary.innerHTML = `<div class="col-span-3 text-xs text-slate-500">Nenhuma caixinha criada. Clique em "Gerenciar Caixinhas" para criar suas metas.</div>`;
         fullList.innerHTML = `<div class="text-xs text-slate-500 py-4 text-center">Nenhuma meta cadastrada ainda.</div>`;
         return;
       }
@@ -887,7 +902,6 @@
       goalsData.forEach(g => {
         const pct = Math.min(100, Math.round((g.current_amount / g.target_amount) * 100));
 
-        // Card resumo na tela principal
         const card = document.createElement("div");
         card.className = "bg-slate-900 border border-slate-800 p-3 rounded-xl";
         card.innerHTML = `
@@ -905,7 +919,6 @@
         `;
         summary.appendChild(card);
 
-        // Item no modal completo com aporte rápido
         const row = document.createElement("div");
         row.className = "bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2";
         row.innerHTML = `
@@ -938,7 +951,7 @@
       };
       await fetch("/api/goals", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload)
       });
       document.getElementById("form-goal").reset();
@@ -952,7 +965,7 @@
 
       await fetch(`/api/goals/${id}/deposit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ amount: val * multiplier })
       });
       inp.value = "";
@@ -961,7 +974,7 @@
 
     async function deleteGoal(id) {
       if (confirm("Remover esta caixinha de reserva?")) {
-        await fetch(`/api/goals/${id}`, { method: "DELETE" });
+        await fetch(`/api/goals/${id}`, { method: "DELETE", headers: getAuthHeaders() });
         loadGoals();
       }
     }
@@ -1017,7 +1030,7 @@
 
     async function deleteIncome(id) {
       if (confirm("Excluir esta receita?")) {
-        await fetch(`/api/incomes/${id}`, { method: "DELETE" });
+        await fetch(`/api/incomes/${id}`, { method: "DELETE", headers: getAuthHeaders() });
         loadAll();
       }
     }
@@ -1027,7 +1040,7 @@
       if (!b) return;
 
       if (b.status === "PAID") {
-        fetch(`/api/bills/${id}/unpay`, { method: "PATCH" }).then(() => loadAll());
+        fetch(`/api/bills/${id}/unpay`, { method: "PATCH", headers: getAuthHeaders() }).then(() => loadAll());
       } else {
         document.getElementById("pay-id").value = b.id;
         document.getElementById("pay-title-display").innerText = `${b.title} (Previsto: ${b.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })})`;
@@ -1057,6 +1070,7 @@
 
       await fetch(`/api/bills/${id}/pay-upload`, {
         method: "POST",
+        headers: { "Authorization": `Bearer ${authToken}` },
         body: formData
       });
 
@@ -1070,12 +1084,14 @@
 
       let cascade = false;
       if (b.total_installments && b.total_installments > 1 && b.current_installment < b.total_installments) {
-        cascade = confirm(`Esta é a parcela ${b.current_installment}/${b.total_installments}.\n\nDeseja excluir TAMBÉM todas as parcelas futuras desta compra?`);
+        cascade = confirm(`Esta é a parcela ${b.current_installment}/${b.total_installments}.
+
+Deseja excluir TAMBÉM todas as parcelas futuras desta compra?`);
       } else {
         if (!confirm("Deseja realmente remover esta conta?")) return;
       }
 
-      await fetch(`/api/bills/${id}?cascade=${cascade}`, { method: "DELETE" });
+      await fetch(`/api/bills/${id}?cascade=${cascade}`, { method: "DELETE", headers: getAuthHeaders() });
       loadAll();
     }
 
@@ -1091,7 +1107,7 @@
     async function importRecurringBills() {
       const m = viewDate.getMonth() + 1;
       const y = viewDate.getFullYear();
-      const res = await fetch(`/api/bills/copy-recurring?month=${m}&year=${y}`, { method: "POST" });
+      const res = await fetch(`/api/bills/copy-recurring?month=${m}&year=${y}`, { method: "POST", headers: getAuthHeaders() });
       const data = await res.json();
       alert(data.message);
       loadAll();
@@ -1100,13 +1116,17 @@
     function exportMonthCSV() {
       const m = viewDate.getMonth() + 1;
       const y = viewDate.getFullYear();
-      const token = localStorage.getItem("auth_token") || "";
-      window.location.href = `/api/export/csv?month=${m}&year=${y}&token=${encodeURIComponent(token)}`;
-    }
-
-    function downloadBackup() {
-      const token = localStorage.getItem("auth_token") || "";
-      window.location.href = `/api/backup?token=${encodeURIComponent(token)}`;
+      fetch(`/api/export/csv?month=${m}&year=${y}`, { headers: getAuthHeaders() })
+        .then(res => res.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `contas_${y}_${m}.csv`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        });
     }
 
     function calculateMetrics() {
@@ -1388,9 +1408,8 @@
           statusBadge = `<span class="px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20">Pendente</span>`;
         }
 
-        const receiptToken = localStorage.getItem("auth_token") || "";
         const receiptBtn = b.receipt_path
-          ? `<a href="/api/bills/${b.id}/receipt?token=${encodeURIComponent(receiptToken)}" target="_blank" class="text-xs px-2.5 py-1 rounded-lg border border-sky-800/50 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 transition flex items-center gap-1 justify-center" title="Ver Comprovante Anexo">
+          ? `<a href="/api/bills/${b.id}/receipt?token=${authToken}" target="_blank" class="text-xs px-2.5 py-1 rounded-lg border border-sky-800/50 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 transition flex items-center gap-1 justify-center" title="Ver Comprovante Anexo">
                <i class="fa-solid fa-file-invoice"></i> Ver
              </a>`
           : `<span class="text-slate-600 text-xs">-</span>`;
@@ -1438,38 +1457,37 @@
       });
     }
 
-    // Visão Anual
     async function openAnnualModal() {
       const year = viewDate.getFullYear();
       document.getElementById("annual-year-title").innerText = year;
-      const res = await fetch(`/api/dashboard/annual?year=${year}`);
-      const data = await res.json();
+      const res = await fetch(`/api/dashboard/annual?year=${year}`, { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const tbody = document.getElementById("annual-table-body");
+        tbody.innerHTML = "";
 
-      const tbody = document.getElementById("annual-table-body");
-      tbody.innerHTML = "";
+        data.forEach(row => {
+          const tr = document.createElement("tr");
+          const isPositive = row.balance >= 0;
+          tr.className = "hover:bg-slate-800/40 transition-colors";
+          tr.innerHTML = `
+            <td class="py-3 px-4 font-semibold text-white">${row.month_name}</td>
+            <td class="py-3 px-4 text-right font-medium text-sky-400">${formatCurrency(row.income)}</td>
+            <td class="py-3 px-4 text-right font-medium text-slate-300">${formatCurrency(row.expense)}</td>
+            <td class="py-3 px-4 text-right font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}">${formatCurrency(row.balance)}</td>
+          `;
+          tbody.appendChild(tr);
+        });
 
-      data.forEach(row => {
-        const tr = document.createElement("tr");
-        const isPositive = row.balance >= 0;
-        tr.className = "hover:bg-slate-800/40 transition-colors";
-        tr.innerHTML = `
-          <td class="py-3 px-4 font-semibold text-white">${row.month_name}</td>
-          <td class="py-3 px-4 text-right font-medium text-sky-400">${formatCurrency(row.income)}</td>
-          <td class="py-3 px-4 text-right font-medium text-slate-300">${formatCurrency(row.expense)}</td>
-          <td class="py-3 px-4 text-right font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}">${formatCurrency(row.balance)}</td>
-        `;
-        tbody.appendChild(tr);
-      });
-
-      document.getElementById("modal-annual").classList.remove("hidden");
-      document.getElementById("modal-annual").classList.add("flex");
+        document.getElementById("modal-annual").classList.remove("hidden");
+        document.getElementById("modal-annual").classList.add("flex");
+      }
     }
     function closeAnnualModal() {
       document.getElementById("modal-annual").classList.add("hidden");
       document.getElementById("modal-annual").classList.remove("flex");
     }
 
-    // Modais
     function toggleFormMode() {
       const isRec = document.getElementById("in-is-recurring").checked;
       const instBox = document.getElementById("box-installments");
@@ -1485,6 +1503,8 @@
       const y = viewDate.getFullYear();
       const m = String(viewDate.getMonth() + 1).padStart(2, '0');
       document.getElementById("in-due-date").value = `${y}-${m}-10`;
+      document.getElementById("in-purchase-date").value = new Date().toISOString().split("T")[0];
+      updateCardDropdown();
       document.getElementById("modal").classList.remove("hidden");
       document.getElementById("modal").classList.add("flex");
       setTimeout(() => document.getElementById("in-title").focus(), 50);
@@ -1492,8 +1512,6 @@
     function closeModal() {
       document.getElementById("modal").classList.add("hidden");
       document.getElementById("modal").classList.remove("flex");
-      delete document.getElementById("in-category").dataset.autoFilled;
-      delete document.getElementById("in-account").dataset.autoFilled;
     }
 
     function openIncomeModal() {
@@ -1546,77 +1564,6 @@
       document.getElementById("modal-budget").classList.remove("flex");
     }
 
-    function openImportModal() {
-      const modal = document.getElementById("modal-import");
-      modal.classList.remove("hidden");
-      modal.classList.add("flex");
-      document.getElementById("form-import").reset();
-      document.getElementById("import-file-text").innerText = "Clique para selecionar ou arraste o arquivo";
-      const alertBox = document.getElementById("import-alert");
-      alertBox.classList.add("hidden");
-    }
-
-    function closeImportModal() {
-      const modal = document.getElementById("modal-import");
-      modal.classList.add("hidden");
-      modal.classList.remove("flex");
-    }
-
-    function updateImportFileName() {
-      const fileInput = document.getElementById("import-file");
-      if (fileInput.files.length > 0) {
-        document.getElementById("import-file-text").innerText = fileInput.files[0].name;
-      }
-    }
-
-    async function submitImportStatement(e) {
-      e.preventDefault();
-      const fileInput = document.getElementById("import-file");
-      const alertBox = document.getElementById("import-alert");
-      const submitBtn = document.getElementById("btn-import-submit");
-
-      if (!fileInput.files.length) {
-        alert("Por favor selecione um arquivo.");
-        return;
-      }
-
-      alertBox.classList.add("hidden");
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando Extrato...';
-
-      const formData = new FormData();
-      formData.append("file", fileInput.files[0]);
-
-      try {
-        const res = await fetch("/api/import/statement", {
-          method: "POST",
-          body: formData
-        });
-        const data = await res.json();
-
-        if (res.ok) {
-          alertBox.className = "text-xs p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400";
-          alertBox.innerText = data.message;
-          alertBox.classList.remove("hidden");
-          setTimeout(() => {
-            closeImportModal();
-            loadAll();
-          }, 1500);
-        } else {
-          alertBox.className = "text-xs p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400";
-          alertBox.innerText = data.detail || "Erro ao processar arquivo.";
-          alertBox.classList.remove("hidden");
-        }
-      } catch (err) {
-        alertBox.className = "text-xs p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400";
-        alertBox.innerText = "Erro ao conectar com o servidor.";
-        alertBox.classList.remove("hidden");
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="fa-solid fa-upload"></i> Processar Extrato';
-      }
-    }
-
     async function submitBill(e) {
       e.preventDefault();
       const payload = {
@@ -1632,13 +1579,11 @@
 
       await fetch("/api/bills", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload)
       });
 
       document.getElementById("form-bill").reset();
-      delete document.getElementById("in-category").dataset.autoFilled;
-      delete document.getElementById("in-account").dataset.autoFilled;
       closeModal();
       loadAll();
     }
@@ -1654,7 +1599,7 @@
 
       await fetch("/api/incomes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload)
       });
 
@@ -1678,7 +1623,7 @@
 
       await fetch(`/api/bills/${id}?cascade=${cascade}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload)
       });
 
@@ -1695,7 +1640,7 @@
 
       await fetch("/api/budgets", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload)
       });
 
@@ -1704,47 +1649,6 @@
       loadAll();
     }
 
-    // Auto-sugestão de categoria e conta ao digitar descrição da despesa
-    let suggestTimeout = null;
-    const inTitleInput = document.getElementById("in-title");
-    const inCategoryInput = document.getElementById("in-category");
-    const inAccountInput = document.getElementById("in-account");
-
-    if (inTitleInput && inCategoryInput && inAccountInput) {
-      inTitleInput.addEventListener("input", (e) => {
-        clearTimeout(suggestTimeout);
-        const term = e.target.value.trim();
-        if (term.length < 2) return;
-
-        suggestTimeout = setTimeout(async () => {
-          try {
-            const res = await fetch(`/api/bills/suggest-category?term=${encodeURIComponent(term)}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.category && (!inCategoryInput.value || inCategoryInput.dataset.autoFilled === "true")) {
-                inCategoryInput.value = data.category;
-                inCategoryInput.dataset.autoFilled = "true";
-              }
-              if (data.account && (!inAccountInput.value || inAccountInput.dataset.autoFilled === "true")) {
-                inAccountInput.value = data.account;
-                inAccountInput.dataset.autoFilled = "true";
-              }
-            }
-          } catch (err) {
-            // Silencioso se der erro na requisição de sugestão
-          }
-        }, 300);
-      });
-
-      inCategoryInput.addEventListener("input", () => {
-        delete inCategoryInput.dataset.autoFilled;
-      });
-      inAccountInput.addEventListener("input", () => {
-        delete inAccountInput.dataset.autoFilled;
-      });
-    }
-
-    // Atalhos Rápidos
     window.addEventListener("keydown", (e) => {
       const activeTag = document.activeElement.tagName.toLowerCase();
       if (["input", "textarea", "select"].includes(activeTag)) {
@@ -1756,7 +1660,6 @@
           closeBudgetModal();
           closeAnnualModal();
           closeGoalsModal();
-          closeImportModal();
         }
         return;
       }
@@ -1775,23 +1678,237 @@
         closeBudgetModal();
         closeAnnualModal();
         closeGoalsModal();
-        closeImportModal();
       }
     });
 
-    // PWA Service Worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    // Inicia verificando se já há sessão salva
+    // Auto-categorização inteligente ao digitar o título
+    const titleInput = document.getElementById("in-title");
+    if (titleInput) {
+      let timeout = null;
+      titleInput.addEventListener("input", () => {
+        clearTimeout(timeout);
+        const val = titleInput.value.trim();
+        if (val.length < 3) return;
+
+        timeout = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/bills/suggest-category?term=${encodeURIComponent(val)}`, {
+              headers: getAuthHeaders()
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.category && !document.getElementById("in-category").value) {
+                document.getElementById("in-category").value = data.category;
+              }
+              if (data.account && !document.getElementById("in-account").value) {
+                document.getElementById("in-account").value = data.account;
+              }
+            }
+          } catch (_) {}
+        }, 400);
+      });
     }
 
-    // Inicialização
-    updatePrivacyIcon();
-    updateMonthDisplay();
-    checkAuthOnStartup().then(authenticated => {
-      if (authenticated) {
-        loadAll();
+    async function uploadStatement(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch("/api/import/statement", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${authToken}` },
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert("Erro na importação: " + (data.detail || "Falha ao processar ficheiro."));
+        } else {
+          alert(data.message);
+          loadAll();
+        }
+      } catch (err) {
+        alert("Falha ao comunicar com o servidor.");
+      } finally {
+        e.target.value = "";
       }
-    });
+    }
+
+    
+    let userCards = [];
+
+    async function loadCards() {
+      try {
+        const res = await fetch("/api/cards", { headers: getAuthHeaders() });
+        if (res.ok) {
+          userCards = await res.json();
+          renderCards();
+          updateCardDropdown();
+        }
+      } catch (err) { console.error(err); }
+    }
+
+    function renderCards() {
+      const list = document.getElementById("cards-list");
+      list.innerHTML = "";
+      if (userCards.length === 0) {
+        list.innerHTML = `<div class="text-xs text-slate-500 py-2">Nenhum cartão cadastrado.</div>`;
+        return;
+      }
+      userCards.forEach(c => {
+        const div = document.createElement("div");
+        div.className = "bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center text-xs";
+        div.innerHTML = `
+          <div>
+            <div class="font-bold text-white flex items-center gap-1.5">
+              <i class="fa-solid fa-credit-card text-purple-400"></i> ${c.name}
+            </div>
+            <div class="text-slate-400 text-[11px] mt-0.5">
+              Fecho: dia <strong>${c.closing_day}</strong> | Vencimento: dia <strong>${c.due_day}</strong>
+              ${c.card_limit ? ` • Limite: ${formatCurrency(c.card_limit)}` : ''}
+            </div>
+          </div>
+          <button onclick="deleteCard(${c.id})" class="text-slate-600 hover:text-rose-400 p-1.5 transition">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        `;
+        list.appendChild(div);
+      });
+    }
+
+    function updateCardDropdown() {
+      const select = document.getElementById("in-card-select");
+      if (!select) return;
+      const cur = select.value;
+      select.innerHTML = `<option value="">Nenhum (Despesa Comum)</option>`;
+      userCards.forEach(c => {
+        select.innerHTML += `<option value="${c.id}">${c.name} (Fecho: ${c.closing_day})</option>`;
+      });
+      select.value = cur;
+    }
+
+    async function submitNewCard(e) {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById("card-name").value,
+        closing_day: parseInt(document.getElementById("card-closing").value),
+        due_day: parseInt(document.getElementById("card-due").value),
+        card_limit: parseFloat(document.getElementById("card-limit").value) || 0
+      };
+      const res = await fetch("/api/cards", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        document.getElementById("form-card").reset();
+        loadCards();
+      } else {
+        const d = await res.json();
+        alert(d.detail || "Erro ao criar cartão.");
+      }
+    }
+
+    async function deleteCard(id) {
+      if (confirm("Remover este cartão de crédito?")) {
+        await fetch(`/api/cards/${id}`, { method: "DELETE", headers: getAuthHeaders() });
+        loadCards();
+      }
+    }
+
+    async function handleCardSelected() {
+      const cardId = document.getElementById("in-card-select").value;
+      const purchaseDate = document.getElementById("in-purchase-date").value;
+      if (!cardId || !purchaseDate) return;
+
+      const card = userCards.find(c => c.id == cardId);
+      if (card && !document.getElementById("in-account").value) {
+        document.getElementById("in-account").value = card.name;
+      }
+
+      try {
+        const res = await fetch("/api/cards/calculate-due", {
+          method: "POST",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ card_id: parseInt(cardId), purchase_date: purchaseDate })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById("in-due-date").value = data.calculated_due_date;
+        }
+      } catch (err) { console.error(err); }
+    }
+
+    function openCardsModal() {
+      document.getElementById("modal-cards").classList.remove("hidden");
+      document.getElementById("modal-cards").classList.add("flex");
+      loadCards();
+    }
+    function closeCardsModal() {
+      document.getElementById("modal-cards").classList.add("hidden");
+      document.getElementById("modal-cards").classList.remove("flex");
+    }
+
+    // TELEGRAM
+    async function openTelegramModal() {
+      document.getElementById("modal-telegram").classList.remove("hidden");
+      document.getElementById("modal-telegram").classList.add("flex");
+      try {
+        const res = await fetch("/api/notifications/settings", { headers: getAuthHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.configured) {
+            document.getElementById("tg-token").value = data.masked_token;
+            document.getElementById("tg-chat").value = data.chat_id;
+          }
+        }
+      } catch (err) { console.error(err); }
+    }
+    function closeTelegramModal() {
+      document.getElementById("modal-telegram").classList.add("hidden");
+      document.getElementById("modal-telegram").classList.remove("flex");
+    }
+
+    async function submitTelegramSettings(e) {
+      e.preventDefault();
+      const bot_token = document.getElementById("tg-token").value.trim();
+      const chat_id = document.getElementById("tg-chat").value.trim();
+
+      const res = await fetch("/api/notifications/settings", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ bot_token, chat_id })
+      });
+      const data = await res.json();
+      alert(data.message);
+    }
+
+    async function testTelegramMessage() {
+      try {
+        const res = await fetch("/api/notifications/test-telegram", {
+          method: "POST",
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        alert(data.message || data.detail);
+      } catch (_) { alert("Falha na comunicação com o servidor."); }
+    }
+
+    async function sendTelegramAlertsNow() {
+      try {
+        const res = await fetch("/api/notifications/send-alerts", {
+          method: "POST",
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        alert(data.message || data.detail);
+      } catch (_) { alert("Falha na comunicação com o servidor."); }
+    }
+
+    checkAuth();
   </script>
 </body>
 </html>
