@@ -1,7 +1,7 @@
 import base64
 import calendar
 import csv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 import hmac
 import io
@@ -10,6 +10,8 @@ import os
 import secrets
 import shutil
 import time
+import urllib.error
+import urllib.request
 from typing import Optional
 
 import jwt
@@ -22,6 +24,8 @@ from pydantic import BaseModel
 
 SECRET_KEY = os.environ.get("JWT_SECRET", os.environ.get("SECRET_KEY", "chave-secreta-padrao-temporaria-123"))
 ALGORITHM = "HS256"
+DEFAULT_TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CRON_SECRET = os.environ.get("CRON_SECRET", "cron-secret-padrao-123")
 
 # Na Vercel, apenas a pasta /tmp permite escrita
 IS_VERCEL = os.environ.get("VERCEL") == "1" or "VERCEL" in os.environ
@@ -210,15 +214,35 @@ def init_db():
                 )
             """)
 
+            # Tabela de Cartões de Crédito
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS credit_cards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1 REFERENCES users(id),
+                    name TEXT NOT NULL,
+                    limit_amount REAL NOT NULL,
+                    closing_day INTEGER NOT NULL,
+                    due_day INTEGER NOT NULL,
+                    color TEXT DEFAULT '#6366f1',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Migração segura para colunas novas
             for table, col_def in [
                 ("bills", "user_id INTEGER DEFAULT 1"),
                 ("bills", "amount_paid REAL"),
                 ("bills", "account TEXT DEFAULT 'Geral'"),
                 ("bills", "receipt_path TEXT"),
+                ("bills", "card_id INTEGER"),
+                ("bills", "installment_group_id TEXT"),
                 ("incomes", "user_id INTEGER DEFAULT 1"),
                 ("saving_goals", "user_id INTEGER DEFAULT 1"),
-                ("category_budgets", "user_id INTEGER DEFAULT 1")
+                ("category_budgets", "user_id INTEGER DEFAULT 1"),
+                ("users", "telegram_chat_id TEXT"),
+                ("users", "telegram_bot_token TEXT"),
+                ("users", "telegram_notifications_enabled INTEGER DEFAULT 0"),
+                ("credit_cards", "user_id INTEGER DEFAULT 1")
             ]:
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
@@ -268,6 +292,7 @@ class BillCreate(BaseModel):
     amount: float
     due_date: str
     account: Optional[str] = "Geral"
+    card_id: Optional[int] = None
     current_installment: Optional[int] = 1
     total_installments: Optional[int] = 1
     is_recurring: Optional[bool] = False
@@ -279,6 +304,7 @@ class BillUpdate(BaseModel):
     amount: float
     due_date: str
     account: Optional[str] = "Geral"
+    card_id: Optional[int] = None
     payment_code: Optional[str] = None
 
 class IncomeCreate(BaseModel):
@@ -298,6 +324,31 @@ class GoalCreate(BaseModel):
 
 class GoalDeposit(BaseModel):
     amount: float
+
+class CreditCardCreate(BaseModel):
+    name: str
+    limit_amount: Optional[float] = 0.0
+    card_limit: Optional[float] = 0.0
+    closing_day: int
+    due_day: int
+    color: Optional[str] = "#6366f1"
+
+class CreditCardUpdate(BaseModel):
+    name: str
+    limit_amount: Optional[float] = 0.0
+    card_limit: Optional[float] = 0.0
+    closing_day: int
+    due_day: int
+    color: Optional[str] = "#6366f1"
+
+class CalculateDueRequest(BaseModel):
+    card_id: int
+    purchase_date: str
+
+class TelegramConfig(BaseModel):
+    chat_id: Optional[str] = None
+    bot_token: Optional[str] = None
+    enabled: Optional[bool] = True
 
 def add_months_safe(orig_date: date, months_to_add: int) -> date:
     year = orig_date.year + (orig_date.month + months_to_add - 1) // 12
@@ -411,6 +462,13 @@ def add_bill(bill: BillCreate, current_user: dict = Depends(get_current_user)):
         start_date = datetime.strptime(bill.due_date, "%Y-%m-%d").date()
         total_inst = bill.total_installments or 1
         account_val = bill.account or "Geral"
+        card_id_val = bill.card_id
+
+        # Se selecionou um cartão e a conta for Geral, atribui o nome do cartão
+        if card_id_val and account_val == "Geral":
+            c_row = conn.execute("SELECT name FROM credit_cards WHERE id = ? AND user_id = ?", (card_id_val, current_user["id"])).fetchone()
+            if c_row:
+                account_val = f"Cartão {c_row['name']}"
 
         if total_inst > 1:
             records = []
@@ -418,17 +476,17 @@ def add_bill(bill: BillCreate, current_user: dict = Depends(get_current_user)):
                 due = add_months_safe(start_date, i)
                 records.append((
                     current_user["id"], bill.title, bill.category, bill.amount, due.isoformat(),
-                    i + 1, total_inst, 0, bill.payment_code, account_val, "PENDING"
+                    i + 1, total_inst, 0, bill.payment_code, account_val, card_id_val, "PENDING"
                 ))
             conn.executemany("""
-                INSERT INTO bills (user_id, title, category, amount, due_date, current_installment, total_installments, is_recurring, payment_code, account, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO bills (user_id, title, category, amount, due_date, current_installment, total_installments, is_recurring, payment_code, account, card_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, records)
         else:
             conn.execute("""
-                INSERT INTO bills (user_id, title, category, amount, due_date, current_installment, total_installments, is_recurring, payment_code, account, status)
-                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, 'PENDING')
-            """, (current_user["id"], bill.title, bill.category, bill.amount, bill.due_date, 1 if bill.is_recurring else 0, bill.payment_code, account_val))
+                INSERT INTO bills (user_id, title, category, amount, due_date, current_installment, total_installments, is_recurring, payment_code, account, card_id, status)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'PENDING')
+            """, (current_user["id"], bill.title, bill.category, bill.amount, bill.due_date, 1 if bill.is_recurring else 0, bill.payment_code, account_val, card_id_val))
 
         try:
             conn.commit()
@@ -443,20 +501,27 @@ def update_bill(bill_id: int, bill: BillUpdate, cascade: bool = Query(False), cu
         if not current:
             raise HTTPException(status_code=404, detail="Conta não encontrada")
 
+        account_val = bill.account or "Geral"
+        card_id_val = bill.card_id
+        if card_id_val and account_val == "Geral":
+            c_row = conn.execute("SELECT name FROM credit_cards WHERE id = ? AND user_id = ?", (card_id_val, current_user["id"])).fetchone()
+            if c_row:
+                account_val = f"Cartão {c_row['name']}"
+
         if cascade and current["total_installments"] and current["total_installments"] > 1:
             conn.execute("""
                 UPDATE bills
-                SET title = ?, category = ?, amount = ?, account = ?, payment_code = ?
+                SET title = ?, category = ?, amount = ?, account = ?, card_id = ?, payment_code = ?
                 WHERE user_id = ? AND title = ? AND total_installments = ? AND current_installment >= ?
-            """, (bill.title, bill.category, bill.amount, bill.account or "Geral", bill.payment_code,
+            """, (bill.title, bill.category, bill.amount, account_val, card_id_val, bill.payment_code,
                   current_user["id"], current["title"], current["total_installments"], current["current_installment"]))
             conn.execute("UPDATE bills SET due_date = ? WHERE id = ? AND user_id = ?", (bill.due_date, bill_id, current_user["id"]))
         else:
             conn.execute("""
                 UPDATE bills
-                SET title = ?, category = ?, amount = ?, due_date = ?, account = ?, payment_code = ?
+                SET title = ?, category = ?, amount = ?, due_date = ?, account = ?, card_id = ?, payment_code = ?
                 WHERE id = ? AND user_id = ?
-            """, (bill.title, bill.category, bill.amount, bill.due_date, bill.account or "Geral", bill.payment_code, bill_id, current_user["id"]))
+            """, (bill.title, bill.category, bill.amount, bill.due_date, account_val, card_id_val, bill.payment_code, bill_id, current_user["id"]))
 
         try:
             conn.commit()
@@ -864,6 +929,400 @@ async def import_statement(file: UploadFile = File(...), user: User = Depends(ge
     return {
         "message": f"Sucesso! {imported_bills} despesas e {imported_incomes} receitas importadas do extrato."
     }
+
+# --- ROTAS DE CARTÕES DE CRÉDITO ---
+@app.get("/api/cards")
+def list_cards(current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        cards = conn.execute(
+            "SELECT * FROM credit_cards WHERE user_id = ? ORDER BY name ASC",
+            (current_user.id,)
+        ).fetchall()
+
+        result = []
+        for c in cards:
+            card_dict = dict(c)
+            row = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) as used
+                FROM bills
+                WHERE user_id = ? AND (card_id = ? OR account = ?) AND status = 'PENDING'
+            """, (current_user.id, c["id"], c["name"])).fetchone()
+
+            used = float(row["used"]) if row else 0.0
+            limit_total = float(c["limit_amount"])
+            available = max(0.0, limit_total - used)
+            pct_used = min(100.0, (used / limit_total * 100.0)) if limit_total > 0 else 0.0
+
+            card_dict["used_amount"] = used
+            card_dict["available_amount"] = available
+            card_dict["used_percentage"] = round(pct_used, 1)
+            card_dict["card_limit"] = limit_total
+            result.append(card_dict)
+
+        return result
+
+@app.post("/api/cards")
+def create_card(card: CreditCardCreate, current_user: User = Depends(get_current_user)):
+    name = card.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nome do cartão é obrigatório")
+    limit_val = float(card.card_limit or card.limit_amount or 0.0)
+    if limit_val <= 0:
+        raise HTTPException(status_code=400, detail="Limite deve ser maior que zero")
+    if not (1 <= card.closing_day <= 31) or not (1 <= card.due_day <= 31):
+        raise HTTPException(status_code=400, detail="Dias de fechamento e vencimento devem ser entre 1 e 31")
+
+    with get_db() as conn:
+        cursor = conn.execute("""
+            INSERT INTO credit_cards (user_id, name, limit_amount, closing_day, due_day, color)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (current_user.id, name, limit_val, card.closing_day, card.due_day, card.color or "#6366f1"))
+        card_id = cursor.lastrowid
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return {"id": card_id, "message": "Cartão cadastrado com sucesso!"}
+
+@app.put("/api/cards/{card_id}")
+def update_card(card_id: int, card: CreditCardUpdate, current_user: User = Depends(get_current_user)):
+    name = card.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nome do cartão é obrigatório")
+    limit_val = float(card.card_limit or card.limit_amount or 0.0)
+    if limit_val <= 0:
+        raise HTTPException(status_code=400, detail="Limite deve ser maior que zero")
+    with get_db() as conn:
+        existing = conn.execute("SELECT id FROM credit_cards WHERE id = ? AND user_id = ?", (card_id, current_user.id)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cartão não encontrado")
+        conn.execute("""
+            UPDATE credit_cards
+            SET name = ?, limit_amount = ?, closing_day = ?, due_day = ?, color = ?
+            WHERE id = ? AND user_id = ?
+        """, (name, limit_val, card.closing_day, card.due_day, card.color or "#6366f1", card_id, current_user.id))
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return {"message": "Cartão atualizado com sucesso!"}
+
+@app.delete("/api/cards/{card_id}")
+def delete_card(card_id: int, current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        existing = conn.execute("SELECT id FROM credit_cards WHERE id = ? AND user_id = ?", (card_id, current_user.id)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cartão não encontrado")
+        conn.execute("DELETE FROM credit_cards WHERE id = ? AND user_id = ?", (card_id, current_user.id))
+        conn.execute("UPDATE bills SET card_id = NULL WHERE card_id = ? AND user_id = ?", (card_id, current_user.id))
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return {"message": "Cartão removido com sucesso!"}
+
+@app.get("/api/cards/{card_id}/invoice")
+def get_card_invoice(card_id: int, month: Optional[int] = None, year: Optional[int] = None, current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        card = conn.execute("SELECT * FROM credit_cards WHERE id = ? AND user_id = ?", (card_id, current_user.id)).fetchone()
+        if not card:
+            raise HTTPException(status_code=404, detail="Cartão não encontrado")
+
+        query = "SELECT * FROM bills WHERE user_id = ? AND (card_id = ? OR account = ?)"
+        params = [current_user.id, card_id, card["name"]]
+        if month and year:
+            prefix = f"{year:04d}-{month:02d}%"
+            query += " AND due_date LIKE ?"
+            params.append(prefix)
+        query += " ORDER BY due_date ASC"
+
+        items = conn.execute(query, params).fetchall()
+        total = sum(float(i["amount"]) for i in items)
+        pending_total = sum(float(i["amount"]) for i in items if i["status"] != "PAID")
+        paid_total = sum(float(i["amount"]) for i in items if i["status"] == "PAID")
+
+        return {
+            "card": dict(card),
+            "items": [dict(i) for i in items],
+            "total": total,
+            "pending_total": pending_total,
+            "paid_total": paid_total
+        }
+
+@app.post("/api/cards/calculate-due")
+def calculate_card_due(data: CalculateDueRequest, current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        card = conn.execute("SELECT * FROM credit_cards WHERE id = ? AND user_id = ?", (data.card_id, current_user.id)).fetchone()
+        if not card:
+            raise HTTPException(status_code=404, detail="Cartão não encontrado")
+
+        try:
+            p_date = datetime.strptime(data.purchase_date, "%Y-%m-%d").date()
+        except Exception:
+            p_date = date.today()
+
+        closing_day = int(card["closing_day"])
+        due_day = int(card["due_day"])
+
+        if p_date.day <= closing_day:
+            if due_day > closing_day:
+                due_y = p_date.year
+                due_m = p_date.month
+            else:
+                due_y = p_date.year + (p_date.month // 12)
+                due_m = (p_date.month % 12) + 1
+        else:
+            if due_day > closing_day:
+                due_y = p_date.year + (p_date.month // 12)
+                due_m = (p_date.month % 12) + 1
+            else:
+                due_m_total = p_date.month + 1
+                due_y = p_date.year + (due_m_total // 12)
+                due_m = (due_m_total % 12) + 1
+
+        max_day = calendar.monthrange(due_y, due_m)[1]
+        final_day = min(due_day, max_day)
+        calculated_due_date = f"{due_y:04d}-{due_m:02d}-{final_day:02d}"
+
+        return {"calculated_due_date": calculated_due_date}
+
+# --- ALERTA TELEGRAM ---
+def send_telegram_msg(bot_token: str, chat_id: str, message: str) -> bool:
+    if not bot_token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": str(chat_id).strip(),
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        res_data = json.loads(response.read().decode("utf-8"))
+        return res_data.get("ok", False)
+
+@app.get("/api/telegram/config")
+@app.get("/api/notifications/settings")
+def get_telegram_config(current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        user_row = conn.execute(
+            "SELECT telegram_chat_id, telegram_bot_token, telegram_notifications_enabled FROM users WHERE id = ?",
+            (current_user.id,)
+        ).fetchone()
+
+        has_token = bool(user_row and user_row["telegram_bot_token"]) or bool(DEFAULT_TELEGRAM_BOT_TOKEN)
+        chat_id = user_row["telegram_chat_id"] if user_row else ""
+        enabled = bool(user_row["telegram_notifications_enabled"]) if user_row else False
+
+        return {
+            "chat_id": chat_id or "",
+            "has_token": has_token,
+            "custom_token_configured": bool(user_row and user_row["telegram_bot_token"]),
+            "enabled": enabled,
+            "configured": bool(chat_id and has_token)
+        }
+
+@app.post("/api/telegram/config")
+@app.post("/api/notifications/settings")
+def save_telegram_config(cfg: TelegramConfig, current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        token_to_save = cfg.bot_token.strip() if cfg.bot_token else None
+        chat_id_to_save = cfg.chat_id.strip() if cfg.chat_id else None
+        enabled_val = 1 if cfg.enabled else 0
+
+        if token_to_save:
+            conn.execute("""
+                UPDATE users 
+                SET telegram_chat_id = ?, telegram_bot_token = ?, telegram_notifications_enabled = ?
+                WHERE id = ?
+            """, (chat_id_to_save, token_to_save, enabled_val, current_user.id))
+        else:
+            conn.execute("""
+                UPDATE users 
+                SET telegram_chat_id = ?, telegram_notifications_enabled = ?
+                WHERE id = ?
+            """, (chat_id_to_save, enabled_val, current_user.id))
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return {"message": "Configurações do Telegram salvas com sucesso!"}
+
+@app.post("/api/telegram/test")
+@app.post("/api/notifications/test-telegram")
+def test_telegram_alert(current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        user_row = conn.execute(
+            "SELECT telegram_chat_id, telegram_bot_token, name FROM users WHERE id = ?",
+            (current_user.id,)
+        ).fetchone()
+        if not user_row or not user_row["telegram_chat_id"]:
+            raise HTTPException(status_code=400, detail="Chat ID do Telegram não configurado.")
+
+        bot_token = user_row["telegram_bot_token"] or DEFAULT_TELEGRAM_BOT_TOKEN
+        if not bot_token:
+            raise HTTPException(status_code=400, detail="Token do Bot do Telegram não configurado. Informe o bot token da sua aplicação.")
+
+        user_name = user_row["name"] or "Usuário"
+        msg = (
+            f"🚀 *Meu Financeiro - Teste de Notificação*\n\n"
+            f"Olá, *{user_name}*! 👋\n"
+            f"Sua integração com o Telegram está ativa e funcionando perfeitamente.\n"
+            f"Você receberá alertas de contas e vencimentos."
+        )
+
+        try:
+            success = send_telegram_msg(bot_token, user_row["telegram_chat_id"], msg)
+            if success:
+                return {"message": "Mensagem de teste enviada com sucesso no seu Telegram!"}
+            else:
+                raise HTTPException(status_code=502, detail="Telegram recusou a mensagem. Verifique se você já enviou /start para o bot.")
+        except urllib.error.HTTPError as e:
+            err_msg = e.read().decode("utf-8", errors="ignore")
+            raise HTTPException(status_code=400, detail=f"Erro na API do Telegram: {err_msg}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Falha ao enviar mensagem: {str(e)}")
+
+@app.post("/api/telegram/send-digest")
+@app.post("/api/notifications/send-alerts")
+def send_telegram_digest(current_user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        user_row = conn.execute(
+            "SELECT telegram_chat_id, telegram_bot_token, name FROM users WHERE id = ?",
+            (current_user.id,)
+        ).fetchone()
+        if not user_row or not user_row["telegram_chat_id"]:
+            raise HTTPException(status_code=400, detail="Chat ID do Telegram não configurado.")
+
+        bot_token = user_row["telegram_bot_token"] or DEFAULT_TELEGRAM_BOT_TOKEN
+        if not bot_token:
+            raise HTTPException(status_code=400, detail="Token do Bot do Telegram não configurado.")
+
+        today_str = date.today().isoformat()
+        in_3_days_str = (date.today() + timedelta(days=3)).isoformat()
+
+        bills = conn.execute("""
+            SELECT title, amount, due_date, account
+            FROM bills
+            WHERE user_id = ? AND status = 'PENDING'
+            ORDER BY due_date ASC
+        """, (current_user.id,)).fetchall()
+
+        overdue = []
+        today_bills = []
+        upcoming = []
+        total_pending = 0.0
+
+        for b in bills:
+            amt = float(b["amount"])
+            total_pending += amt
+            d_date = b["due_date"]
+            if d_date < today_str:
+                overdue.append(b)
+            elif d_date == today_str:
+                today_bills.append(b)
+            elif d_date <= in_3_days_str:
+                upcoming.append(b)
+
+        user_name = user_row["name"] or "Usuário"
+        lines = [f"📊 *Resumo Financeiro - {date.today().strftime('%d/%m/%Y')}*", f"Olá, *{user_name}*!\n"]
+
+        if not bills:
+            lines.append("🎉 *Parabéns! Você não tem nenhuma conta pendente.*")
+        else:
+            if overdue:
+                lines.append(f"⚠️ *Em Atraso ({len(overdue)}):*")
+                for b in overdue:
+                    due_fmt = datetime.strptime(b['due_date'], '%Y-%m-%d').strftime('%d/%m')
+                    lines.append(f"• {b['title']}: R$ {b['amount']:.2f} (venceu {due_fmt})")
+                lines.append("")
+
+            if today_bills:
+                lines.append(f"📅 *Vencendo Hoje ({len(today_bills)}):*")
+                for b in today_bills:
+                    lines.append(f"• {b['title']}: R$ {b['amount']:.2f}")
+                lines.append("")
+
+            if upcoming:
+                lines.append(f"⏳ *Próximos 3 Dias ({len(upcoming)}):*")
+                for b in upcoming:
+                    due_fmt = datetime.strptime(b['due_date'], '%Y-%m-%d').strftime('%d/%m')
+                    lines.append(f"• {b['title']}: R$ {b['amount']:.2f} (vence {due_fmt})")
+                lines.append("")
+
+            lines.append(f"💰 *Total Pendente:* R$ {total_pending:.2f}")
+
+        msg = "\n".join(lines)
+
+        try:
+            success = send_telegram_msg(bot_token, user_row["telegram_chat_id"], msg)
+            if success:
+                return {"message": "Resumo de vencimentos enviado para seu Telegram com sucesso!"}
+            else:
+                raise HTTPException(status_code=502, detail="Telegram recusou a mensagem. Verifique seu chat ID ou envie /start ao bot.")
+        except urllib.error.HTTPError as e:
+            err_msg = e.read().decode("utf-8", errors="ignore")
+            raise HTTPException(status_code=400, detail=f"Erro no Telegram: {err_msg}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Falha ao enviar resumo: {str(e)}")
+
+@app.get("/api/telegram/cron-digest")
+def cron_telegram_digest(authorization: Optional[str] = Header(None), secret: Optional[str] = Query(None)):
+    token_candidate = None
+    if authorization and authorization.startswith("Bearer "):
+        token_candidate = authorization.split(" ", 1)[1].strip()
+    elif secret:
+        token_candidate = secret.strip()
+
+    if token_candidate != CRON_SECRET:
+        raise HTTPException(status_code=403, detail="Acesso não autorizado ao job de notificações")
+
+    today_str = date.today().isoformat()
+    sent_count = 0
+    with get_db() as conn:
+        users = conn.execute("""
+            SELECT id, name, telegram_chat_id, telegram_bot_token
+            FROM users
+            WHERE telegram_notifications_enabled = 1 
+              AND telegram_chat_id IS NOT NULL 
+              AND telegram_chat_id != ''
+        """).fetchall()
+
+        for u in users:
+            bot_token = u["telegram_bot_token"] or DEFAULT_TELEGRAM_BOT_TOKEN
+            if not bot_token:
+                continue
+            bills = conn.execute("""
+                SELECT title, amount, due_date
+                FROM bills
+                WHERE user_id = ? AND status = 'PENDING' AND due_date <= ?
+                ORDER BY due_date ASC
+            """, (u["id"], today_str)).fetchall()
+
+            if not bills:
+                continue
+
+            lines = [
+                f"🔔 *Lembrete Diário - Meu Financeiro*",
+                f"Olá, *{u['name']}*! Você tem contas precisando de atenção hoje:\n"
+            ]
+            for b in bills:
+                status_icon = "⚠️" if b["due_date"] < today_str else "📅"
+                lines.append(f"{status_icon} *{b['title']}*: R$ {b['amount']:.2f}")
+
+            msg = "\n".join(lines)
+            try:
+                if send_telegram_msg(bot_token, u["telegram_chat_id"], msg):
+                    sent_count += 1
+            except Exception:
+                pass
+
+    return {"message": f"Notificações enviadas para {sent_count} usuários."}
 
 @app.get("/api/backup")
 def download_backup(current_user: dict = Depends(get_current_user)):

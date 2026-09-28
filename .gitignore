@@ -1,6 +1,10 @@
+.venv/
+env/
+venv/
 __pycache__/
 *.pyc
 .env
 uploads/
+*.db
 finance.db
 .vercel/
