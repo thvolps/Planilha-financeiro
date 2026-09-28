@@ -18,22 +18,22 @@ import jwt
 from ofxparse import OfxParser
 from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-SECRET_KEY = os.environ.get("JWT_SECRET", os.environ.get("SECRET_KEY", "chave-secreta-padrao-temporaria-123"))
+SECRET_KEY = os.environ.get("JWT_SECRET", os.environ.get("SECRET_KEY", "super-secret-finance-key-123456"))
 ALGORITHM = "HS256"
 DEFAULT_TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CRON_SECRET = os.environ.get("CRON_SECRET", "cron-secret-padrao-123")
 
-# Na Vercel, apenas a pasta /tmp permite escrita
+# No Render ou localmente, guardamos a base de dados na raiz do projeto; na Vercel em /tmp
 IS_VERCEL = os.environ.get("VERCEL") == "1" or "VERCEL" in os.environ
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(current_dir)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+root_dir = BASE_DIR
 public_path = os.path.join(root_dir, "public")
 
-DB_DIR = "/tmp" if IS_VERCEL else root_dir
+DB_DIR = "/tmp" if IS_VERCEL else BASE_DIR
 DB_PATH = os.path.join(DB_DIR, "finance.db")
 DB_NAME = DB_PATH
 UPLOAD_DIR = os.path.join(DB_DIR, "uploads")
@@ -43,7 +43,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
 TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
 
-app = FastAPI(title="Painel Financeiro")
+app = FastAPI(title="Painel Financeiro Pessoal")
 
 # Habilita CORS para evitar bloqueios de requisições no navegador
 app.add_middleware(
@@ -1442,15 +1442,16 @@ def service_worker():
     """
     return Response(content=content, media_type="application/javascript")
 
-# Rota raiz servindo o index.html na raiz do projeto
-@app.get("/")
+# Rota para carregar o frontend diretamente no Render / local / Vercel
+@app.get("/", response_class=HTMLResponse)
 def serve_index():
     for p in [
-        os.path.join(root_dir, "index.html"),
+        os.path.join(BASE_DIR, "index.html"),
         "index.html",
         os.path.join(public_path, "index.html"),
         "public/index.html"
     ]:
         if os.path.exists(p):
-            return FileResponse(p)
-    return {"message": "API online. Coloque o index.html na raiz."}
+            with open(p, "r", encoding="utf-8") as f:
+                return f.read()
+    return HTMLResponse("<h1>API online. index.html não encontrado na raiz.</h1>", status_code=404)
