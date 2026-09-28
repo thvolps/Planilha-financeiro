@@ -44,6 +44,10 @@
           <i class="fa-solid fa-download"></i> Backup
         </button>
 
+        <button onclick="openImportModal()" class="bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-semibold px-3 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm" title="Importar Extrato OFX ou CSV">
+          <i class="fa-solid fa-file-import"></i> Extrato
+        </button>
+
         <!-- Perfil do Usuário -->
         <div id="user-profile-badge" class="hidden items-center gap-2 bg-slate-900/90 border border-slate-800 text-slate-300 text-xs px-3 py-2 rounded-xl">
           <i class="fa-solid fa-circle-user text-emerald-400 text-sm"></i>
@@ -521,6 +525,39 @@
           <input id="b-limit" required step="10" type="number" placeholder="Ex: 1500" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500 outline-none">
         </div>
         <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2.5 rounded-xl transition text-sm">Salvar Teto</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal de Importação de Extrato Bancário OFX/CSV -->
+  <div id="modal-import" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50 transition-opacity">
+    <div class="bg-slate-900 border border-slate-800 w-full max-w-md p-6 rounded-3xl shadow-2xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-white text-base flex items-center gap-2">
+          <i class="fa-solid fa-file-import text-indigo-400"></i> Importar Extrato Bancário
+        </h3>
+        <button onclick="closeImportModal()" class="text-slate-400 hover:text-white transition"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <p class="text-xs text-slate-400 leading-relaxed">
+        Envie o extrato emitido pelo seu banco em formato <strong class="text-indigo-400">.OFX</strong> (Nubank, Itaú, Inter, Bradesco, etc.) ou <strong class="text-indigo-400">.CSV</strong> para importar transações automaticamente.
+      </p>
+
+      <form id="form-import" onsubmit="submitImportStatement(event)" class="space-y-4">
+        <div class="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-2xl p-6 text-center transition cursor-pointer bg-slate-950/40 relative">
+          <input type="file" id="import-file" required accept=".ofx,.csv" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onchange="updateImportFileName()">
+          <div id="import-file-display" class="space-y-2">
+            <i class="fa-solid fa-cloud-arrow-up text-3xl text-indigo-400"></i>
+            <div id="import-file-text" class="text-xs font-semibold text-slate-200">Clique para selecionar ou arraste o arquivo</div>
+            <div class="text-[11px] text-slate-500">Formatos aceitos: .OFX ou .CSV</div>
+          </div>
+        </div>
+
+        <div id="import-alert" class="hidden text-xs p-3 rounded-xl"></div>
+
+        <button type="submit" id="btn-import-submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-950">
+          <i class="fa-solid fa-upload"></i> Processar Extrato
+        </button>
       </form>
     </div>
   </div>
@@ -1455,6 +1492,8 @@
     function closeModal() {
       document.getElementById("modal").classList.add("hidden");
       document.getElementById("modal").classList.remove("flex");
+      delete document.getElementById("in-category").dataset.autoFilled;
+      delete document.getElementById("in-account").dataset.autoFilled;
     }
 
     function openIncomeModal() {
@@ -1507,6 +1546,77 @@
       document.getElementById("modal-budget").classList.remove("flex");
     }
 
+    function openImportModal() {
+      const modal = document.getElementById("modal-import");
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+      document.getElementById("form-import").reset();
+      document.getElementById("import-file-text").innerText = "Clique para selecionar ou arraste o arquivo";
+      const alertBox = document.getElementById("import-alert");
+      alertBox.classList.add("hidden");
+    }
+
+    function closeImportModal() {
+      const modal = document.getElementById("modal-import");
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+
+    function updateImportFileName() {
+      const fileInput = document.getElementById("import-file");
+      if (fileInput.files.length > 0) {
+        document.getElementById("import-file-text").innerText = fileInput.files[0].name;
+      }
+    }
+
+    async function submitImportStatement(e) {
+      e.preventDefault();
+      const fileInput = document.getElementById("import-file");
+      const alertBox = document.getElementById("import-alert");
+      const submitBtn = document.getElementById("btn-import-submit");
+
+      if (!fileInput.files.length) {
+        alert("Por favor selecione um arquivo.");
+        return;
+      }
+
+      alertBox.classList.add("hidden");
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando Extrato...';
+
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+
+      try {
+        const res = await fetch("/api/import/statement", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          alertBox.className = "text-xs p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400";
+          alertBox.innerText = data.message;
+          alertBox.classList.remove("hidden");
+          setTimeout(() => {
+            closeImportModal();
+            loadAll();
+          }, 1500);
+        } else {
+          alertBox.className = "text-xs p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400";
+          alertBox.innerText = data.detail || "Erro ao processar arquivo.";
+          alertBox.classList.remove("hidden");
+        }
+      } catch (err) {
+        alertBox.className = "text-xs p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400";
+        alertBox.innerText = "Erro ao conectar com o servidor.";
+        alertBox.classList.remove("hidden");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fa-solid fa-upload"></i> Processar Extrato';
+      }
+    }
+
     async function submitBill(e) {
       e.preventDefault();
       const payload = {
@@ -1527,6 +1637,8 @@
       });
 
       document.getElementById("form-bill").reset();
+      delete document.getElementById("in-category").dataset.autoFilled;
+      delete document.getElementById("in-account").dataset.autoFilled;
       closeModal();
       loadAll();
     }
@@ -1592,6 +1704,46 @@
       loadAll();
     }
 
+    // Auto-sugestão de categoria e conta ao digitar descrição da despesa
+    let suggestTimeout = null;
+    const inTitleInput = document.getElementById("in-title");
+    const inCategoryInput = document.getElementById("in-category");
+    const inAccountInput = document.getElementById("in-account");
+
+    if (inTitleInput && inCategoryInput && inAccountInput) {
+      inTitleInput.addEventListener("input", (e) => {
+        clearTimeout(suggestTimeout);
+        const term = e.target.value.trim();
+        if (term.length < 2) return;
+
+        suggestTimeout = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/bills/suggest-category?term=${encodeURIComponent(term)}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.category && (!inCategoryInput.value || inCategoryInput.dataset.autoFilled === "true")) {
+                inCategoryInput.value = data.category;
+                inCategoryInput.dataset.autoFilled = "true";
+              }
+              if (data.account && (!inAccountInput.value || inAccountInput.dataset.autoFilled === "true")) {
+                inAccountInput.value = data.account;
+                inAccountInput.dataset.autoFilled = "true";
+              }
+            }
+          } catch (err) {
+            // Silencioso se der erro na requisição de sugestão
+          }
+        }, 300);
+      });
+
+      inCategoryInput.addEventListener("input", () => {
+        delete inCategoryInput.dataset.autoFilled;
+      });
+      inAccountInput.addEventListener("input", () => {
+        delete inAccountInput.dataset.autoFilled;
+      });
+    }
+
     // Atalhos Rápidos
     window.addEventListener("keydown", (e) => {
       const activeTag = document.activeElement.tagName.toLowerCase();
@@ -1604,6 +1756,7 @@
           closeBudgetModal();
           closeAnnualModal();
           closeGoalsModal();
+          closeImportModal();
         }
         return;
       }
@@ -1622,6 +1775,7 @@
         closeBudgetModal();
         closeAnnualModal();
         closeGoalsModal();
+        closeImportModal();
       }
     });
 

@@ -13,6 +13,7 @@ import time
 from typing import Optional
 
 import jwt
+from ofxparse import OfxParser
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -305,6 +306,15 @@ def add_months_safe(orig_date: date, months_to_add: int) -> date:
     day = min(orig_date.day, max_day)
     return date(year, month, day)
 
+def normalize_date_str(val: str) -> str:
+    val = val.strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%y"):
+        try:
+            return datetime.strptime(val, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return date.today().strftime("%Y-%m-%d")
+
 # --- ROTAS DE AUTENTICAÇÃO ---
 @app.post("/api/auth/register")
 def register(data: UserRegister):
@@ -358,6 +368,20 @@ def login(data: UserLogin):
 @app.get("/api/auth/me")
 def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+# Endpoint para auto-sugestão de categoria com base no histórico do usuário
+@app.get("/api/bills/suggest-category")
+def suggest_category(term: str = Query(...), user: User = Depends(get_current_user)):
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT category, account 
+            FROM bills 
+            WHERE user_id = ? AND title LIKE ? 
+            ORDER BY id DESC LIMIT 1
+        """, (user.id, f"%{term.strip()}%")).fetchone()
+        if row:
+            return {"category": row["category"], "account": row["account"]}
+        return {"category": None, "account": None}
 
 # --- ROTAS DE DESPESAS ---
 @app.get("/api/bills")
@@ -732,6 +756,114 @@ def export_csv(month: int, year: int, current_user: dict = Depends(get_current_u
     csv_data = output.getvalue().encode('utf-8-sig')
     headers = {"Content-Disposition": f"attachment; filename=contas_{year:04d}_{month:02d}.csv"}
     return Response(content=csv_data, media_type="text/csv; charset=utf-8", headers=headers)
+
+# Endpoint para upload e conversão em lote de extrato bancário OFX/CSV
+@app.post("/api/import/statement")
+async def import_statement(file: UploadFile = File(...), user: User = Depends(get_current_user)):
+    filename = file.filename.lower()
+    imported_bills = 0
+    imported_incomes = 0
+
+    if filename.endswith(".ofx"):
+        content = await file.read()
+        ofx = OfxParser.parse(io.BytesIO(content))
+        with get_db() as conn:
+            for account in ofx.accounts:
+                for tx in account.statement.transactions:
+                    tx_date = tx.date.strftime("%Y-%m-%d")
+                    tx_amount = float(tx.amount)
+                    tx_memo = tx.memo or tx.payee or "Transação Bancária"
+
+                    if tx_amount < 0:
+                        # Tenta auto-sugerir categoria baseado no histórico
+                        cat_row = conn.execute("""
+                            SELECT category FROM bills 
+                            WHERE user_id = ? AND title LIKE ? 
+                            ORDER BY id DESC LIMIT 1
+                        """, (user.id, f"%{tx_memo[:20].strip()}%")).fetchone()
+                        cat = cat_row["category"] if cat_row else "Importado"
+
+                        conn.execute("""
+                            INSERT INTO bills (user_id, title, category, amount, due_date, account, status)
+                            VALUES (?, ?, ?, ?, ?, 'Extrato OFX', 'PAID')
+                        """, (user.id, tx_memo, cat, abs(tx_amount), tx_date))
+                        imported_bills += 1
+                    else:
+                        conn.execute("""
+                            INSERT INTO incomes (user_id, title, amount, receive_date)
+                            VALUES (?, ?, ?, ?)
+                        """, (user.id, tx_memo, tx_amount, tx_date))
+                        imported_incomes += 1
+            try:
+                conn.commit()
+            except Exception:
+                pass
+
+    elif filename.endswith(".csv"):
+        content = await file.read()
+        text = content.decode("utf-8-sig", errors="ignore")
+        reader = csv.reader(io.StringIO(text), delimiter=';' if ';' in text else ',')
+        header = next(reader, None)
+
+        col_date_idx = 0
+        col_desc_idx = 1
+        col_amount_idx = 2
+
+        if header:
+            header_lower = [h.strip().lower() for h in header]
+            for idx, h in enumerate(header_lower):
+                if any(k in h for k in ("data", "date")):
+                    col_date_idx = idx
+                elif any(k in h for k in ("descri", "hist", "memo", "lança", "lanca", "identif", "título", "titulo")):
+                    col_desc_idx = idx
+                elif any(k in h for k in ("valor", "amount", "quantia", "total")):
+                    col_amount_idx = idx
+
+        with get_db() as conn:
+            for row in reader:
+                if not row or len(row) <= max(col_date_idx, col_desc_idx, col_amount_idx):
+                    continue
+                try:
+                    tx_date = normalize_date_str(row[col_date_idx])
+                    tx_memo = row[col_desc_idx].strip() or "Transação Bancária"
+                    raw_val = row[col_amount_idx].replace("R$", "").replace(" ", "").strip()
+                    if "," in raw_val and "." in raw_val:
+                        raw_val = raw_val.replace(".", "").replace(",", ".")
+                    elif "," in raw_val:
+                        raw_val = raw_val.replace(",", ".")
+                    tx_amount = float(raw_val)
+
+                    if tx_amount < 0:
+                        cat_row = conn.execute("""
+                            SELECT category FROM bills 
+                            WHERE user_id = ? AND title LIKE ? 
+                            ORDER BY id DESC LIMIT 1
+                        """, (user.id, f"%{tx_memo[:20].strip()}%")).fetchone()
+                        cat = cat_row["category"] if cat_row else "Importado"
+
+                        conn.execute("""
+                            INSERT INTO bills (user_id, title, category, amount, due_date, account, status)
+                            VALUES (?, ?, ?, ?, ?, 'Extrato CSV', 'PAID')
+                        """, (user.id, tx_memo, cat, abs(tx_amount), tx_date))
+                        imported_bills += 1
+                    else:
+                        conn.execute("""
+                            INSERT INTO incomes (user_id, title, amount, receive_date)
+                            VALUES (?, ?, ?, ?)
+                        """, (user.id, tx_memo, tx_amount, tx_date))
+                        imported_incomes += 1
+                except Exception:
+                    continue
+            try:
+                conn.commit()
+            except Exception:
+                pass
+    else:
+        raise HTTPException(status_code=400, detail="Formato não suportado. Envie um arquivo .ofx ou .csv.")
+
+    return {
+        "message": f"Sucesso! {imported_bills} despesas e {imported_incomes} receitas importadas do extrato."
+    }
 
 @app.get("/api/backup")
 def download_backup(current_user: dict = Depends(get_current_user)):
