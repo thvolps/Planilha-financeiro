@@ -39,6 +39,12 @@ DB_NAME = DB_PATH
 UPLOAD_DIR = os.path.join(DB_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+import sqlite3
+try:
+    import libsql_client
+except ImportError:
+    libsql_client = None
+
 # Conexão com Turso ou SQLite local
 TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL")
 TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
@@ -54,26 +60,115 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
-    try:
-        import libsql_experimental as sqlite3
-        def get_db():
-            conn = sqlite3.connect(
-                database=TURSO_DATABASE_URL,
-                auth_token=TURSO_AUTH_TOKEN,
-                autocommit=True
-            )
+class LibsqlRow:
+    def __init__(self, columns, row):
+        self._columns = list(columns)
+        self._row = row
+        self._dict = dict(zip(self._columns, row))
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._row[key]
+        return self._dict[key]
+
+    def get(self, key, default=None):
+        return self._dict.get(key, default)
+
+    def keys(self):
+        return self._dict.keys()
+
+    def values(self):
+        return self._dict.values()
+
+    def items(self):
+        return self._dict.items()
+
+    def __iter__(self):
+        return iter(self._dict)
+
+    def __repr__(self):
+        return repr(self._dict)
+
+class LibsqlCursor:
+    def __init__(self, result_set):
+        self._result = result_set
+        self.columns = list(result_set.columns) if result_set and hasattr(result_set, 'columns') else []
+        self._rows = [LibsqlRow(self.columns, r) for r in result_set.rows] if result_set and hasattr(result_set, 'rows') else []
+        self._idx = 0
+        self.lastrowid = getattr(result_set, 'last_insert_rowid', None)
+        self.rowcount = getattr(result_set, 'rows_affected', 0)
+
+    def fetchone(self):
+        if self._idx < len(self._rows):
+            r = self._rows[self._idx]
+            self._idx += 1
+            return r
+        return None
+
+    def fetchall(self):
+        rows = self._rows[self._idx:]
+        self._idx = len(self._rows)
+        return rows
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+class LibsqlConnection:
+    def __init__(self, url, auth_token=None):
+        self.client = libsql_client.create_client_sync(url=url, auth_token=auth_token)
+
+    def execute(self, query, params=()):
+        p_list = list(params) if params else []
+        res = self.client.execute(query, p_list)
+        return LibsqlCursor(res)
+
+    def cursor(self):
+        return self
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        try:
+            self.client.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+def execute_query(query: str, params: tuple = ()):
+    """Executa consultas de forma transparente tanto no Turso como no SQLite local."""
+    if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN and libsql_client:
+        # Modo Nuvem Persistente (Turso via HTTP)
+        url = TURSO_DATABASE_URL.replace("libsql://", "https://")
+        client = libsql_client.create_client_sync(url=url, auth_token=TURSO_AUTH_TOKEN)
+        try:
+            result = client.execute(query, list(params))
+            return result
+        finally:
+            client.close()
+    else:
+        # Modo Local de Reserva
+        db_path = "/tmp/finance.db" if os.environ.get("VERCEL") else DB_PATH
+        with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
-            return conn
-    except ImportError:
-        import sqlite3
-        def get_db():
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            return conn
-else:
-    import sqlite3
-    def get_db():
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor.fetchall()
+
+def get_db():
+    if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN and libsql_client:
+        url = TURSO_DATABASE_URL.replace("libsql://", "https://")
+        return LibsqlConnection(url=url, auth_token=TURSO_AUTH_TOKEN)
+    else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         return conn
