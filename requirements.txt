@@ -4,3 +4,4 @@ python-multipart>=0.0.9
 pyjwt>=2.8.0
 ofxparse>=0.21
 uvicorn[standard]>=0.28.0
+libsql-client>=0.3.0
